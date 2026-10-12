@@ -9,4 +9,6 @@
 - Restore rotates vault identity before accepting clients to separate history branches, including recycled revision numbers.
 - Docker uses dedicated mindsync UID/GID10001; image and healthy Compose startup verified.
 - Real HTTP sync and PostgreSQL/object backup restoration verified.
-- Actual fnOS, Obsidian UI on Windows/macOS, Android hardware and external access remain unverified.
+- Actual Windows/macOS Obsidian UI, Android hardware and external access remain unverified.
+- fnOS acceptance (2026-10-12): build on the NAS needs `docker build --network=host` because the container resolver is unreachable from build containers there; containers must run as the data directory's owner because the storage layer denies unknown uids (10001) write access even after chown; the first start needs a longer health start period and a self-polled `/health` instead of `compose up --wait`.
+- Libraries: one library equals one compose project plus one data directory plus one admin token. The first library uses unsuffixed names (project `mindsync`, containers `mindsync`/`postgres`); later libraries must be suffixed because container names are host-unique. `backup.sh`/`restore.sh` read the project name from the library env.

@@ -33,7 +33,7 @@
 
 | 键 | 含义 | 约束 |
 | --- | --- | --- |
-| `MINDSYNC_LIBRARY` | 库名；compose 项目名固定为 `mindsync-<库名>`，所有库命令都必须显式传 `-p mindsync-<库名>` | 仅小写字母、数字、`-`；全局唯一 |
+| `MINDSYNC_LIBRARY` | 库名；compose 项目名与容器名见 `MINDSYNC_PROJECT` / `MINDSYNC_CONTAINER_NAME` / `MINDSYNC_POSTGRES_CONTAINER_NAME`（第 13 节第 6 条修订：第一个库为 `mindsync` / `mindsync` / `postgres`） | 仅小写字母、数字、`-`；全局唯一 |
 | `MINDSYNC_PORT` | 宿主机发布端口 | 各库不得重复 |
 | `MINDSYNC_BIND_ADDRESS` | 监听地址 | 局域网填 NAS 的实际 IP |
 | `MINDSYNC_DATA_DIR` | 数据目录（bind mount 源） | 绝对路径；**各库不得重复**；其下 `vault/` 即可读文件树 |
@@ -53,7 +53,7 @@
 # 1) 定义库（脚本会提示输入管理令牌与数据库口令，不打印、不随机生成）
 sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 
-# 2) 脚本内部完成：创建数据目录 → 用一次性容器 chown 10001:10001
+# 2) 脚本内部完成：创建数据目录 → 以该目录属主身份运行容器（见第 13 节第 1 条）
 #    → 由 libraries/example.env 生成 libraries/zotero.env
 #    → docker compose -p mindsync-zotero --env-file libraries/zotero.env up -d --wait
 #    → 等待 /health 通过并打印结果
@@ -115,7 +115,7 @@ PostgreSQL 继续使用项目级命名卷（不同项目名即天然隔离；且
 2. `compose.yaml` 加 `MINDSYNC_DATA_DIR`（见第 7 节）。
 3. 新增 `scripts/add-library.sh` 与 `libraries/example.env`。
 4. 在飞牛上部署**首个库**（笔记库），数据目录走 bind mount，本地 `/vol1/1000/libraries/notes/`。
-5. 用一次性容器解决 `10001:10001` 属主问题（`admin` 无免密 sudo）。
+5. 以数据目录属主身份运行容器，避免飞牛 ACL 导致的写入失败（见第 13 节第 1 条）。
 6. 预留 `libraries/zotero.env.example` + 文档说明；**不创建** Zotero 库内容。
 7. 打包与校验（`scripts/package.mjs`）。
 
@@ -132,7 +132,7 @@ PostgreSQL 继续使用项目级命名卷（不同项目名即天然隔离；且
   - 两个数据目录、两个端口、两套令牌互不干扰；
   - 停掉 `scratch`，`notes` 的 `/health` 与同步不受影响；
   - 两个库的 `vault/` 可读文件树各自独立、可在文件管理器中浏览。
-- 权限：`/vol1/1000/libraries/<name>/` 属主为 `10001:10001`，容器可写。
+- 权限：容器以数据目录属主身份运行，可写该目录（第 13 节第 1 条；实机已按此验证）。
 - 钉住 `MINDSYNC_ADMIN_TOKEN` 与 `POSTGRES_PASSWORD` 均由使用者输入，脚本输出与日志中不出现明文。
 - 打包产物不含凭据、本地数据与构建缓存。
 
@@ -142,7 +142,7 @@ PostgreSQL 继续使用项目级命名卷（不同项目名即天然隔离；且
 | --- | --- |
 | 端口冲突 | `add-library.sh` 启动前检查端口占用并报错 |
 | 数据目录填错导致跨库串用 | 脚本校验：目录必须存在且未被其它库 env 引用 |
-| 忘记 `-p` 导致误操作到笔记库 | 文档与脚本一律显式传 `-p mindsync-<库名>`；`add-library.sh` 不依赖默认项目名 |
+| 忘记 `-p` 导致误操作到笔记库 | 文档与脚本一律显式传 `-p`，项目名取自 env 的 `MINDSYNC_PROJECT` |
 | 磁盘占用增长（文献 PDF 体积大） | 各库独立数据目录，便于单独统计与限额；文档提示 |
 | 备份遗漏新库 | 文档补充：备份按库分别执行（`scripts/backup.sh` 在库的 compose 项目下运行） |
 | 移动端引用到文献库 | 默认不安装文献库 vault；文档明确"按 vault 订阅" |

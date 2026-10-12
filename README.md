@@ -22,7 +22,7 @@ sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
 sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 ```
 
-各库必须使用不同的端口与数据目录，所有命令都要显式带 `-p mindsync-<库名>`。`vault/` 是该库最新的**可读文件树**，可在飞牛文件管理器中直接浏览；它只供查看与导出，直接修改不会同步给设备。
+各库必须使用不同的端口与数据目录，所有库命令都要显式带 `-p`（第一个库的项目名就是 `mindsync`，其余见 `libraries/<库名>.env` 里的 `MINDSYNC_PROJECT`）。`vault/` 是该库最新的**可读文件树**，可在飞牛文件管理器中直接浏览；它只供查看与导出，直接修改不会同步给设备。
 
 旧的单库方式（`sh scripts/init-env.sh` + `.env` + `docker compose up -d --build --wait`）仍然可用，详见部署说明。
 

@@ -26,7 +26,7 @@ sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
 sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 ```
 
-各库必须使用**互不相同**的 `MINDSYNC_PORT` 与 `MINDSYNC_DATA_DIR`。所有库命令都要显式带 `-p mindsync-<库名>`；脚本与文档一律如此，缺少 `-p` 会误操作到其它库。
+各库必须使用**互不相同**的 `MINDSYNC_PORT` 与 `MINDSYNC_DATA_DIR`。所有库命令都要显式带 `-p`：第一个库的项目名就是 `mindsync`，其余库见其 env 里的 `MINDSYNC_PROJECT`（形如 `mindsync-<库名>`）。缺少 `-p` 会误操作到其它库。
 
 ### 1.4 库的数据目录
 
@@ -109,11 +109,11 @@ MINDSYNC_LIBRARY=notes-restored sh scripts/restore.sh /实际备份目录
 
 ## 5. 更新与设备撤销
 
-更新前先执行备份，然后在源码目录用新源码重建并重启该库：`docker compose -p mindsync-<库名> --env-file libraries/<库名>.env up -d --build`。数据库迁移由服务启动自动执行；旧版本回退可能不兼容新 schema，回退应使用更新前的完整备份。
+更新前先执行备份，然后在源码目录用新源码重建并重启该库（项目名取自 env）：`docker compose -p "$(grep '^MINDSYNC_PROJECT=' libraries/<库名>.env | cut -d= -f2)" --env-file libraries/<库名>.env up -d --build`。数据库迁移由服务启动自动执行；旧版本回退可能不兼容新 schema，回退应使用更新前的完整备份。
 
 设备丢失时用管理令牌调用 `GET /v1/devices`，找到设备 ID，再调用 `DELETE /v1/devices/{id}`；见[协议](protocol.md)。撤销即时拒绝该设备后续请求。管理令牌泄露时更改该库的 `libraries/<库名>.env` 并重建容器；已注册设备令牌仍可使用，必要时逐个撤销。
 
-故障定位先看 `docker compose -p mindsync-<库名> --env-file libraries/<库名>.env ps` 与 `... logs --tail 100 mindsync`。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
+故障定位先看 `docker compose -p mindsync --env-file libraries/notes.env ps` 与 `... logs --tail 100 mindsync`（把 `mindsync` 与 `libraries/notes.env` 换成该库的项目名与 env）。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
 
 装有 Node.js 的管理电脑也可使用辅助脚本。通过环境变量读取凭证，脚本不打印令牌：
 
