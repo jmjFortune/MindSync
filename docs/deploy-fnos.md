@@ -16,6 +16,8 @@ sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
 
 脚本会提示输入该库的**管理令牌**（至少 32 位）与 **PostgreSQL 密码**：只在你自己的终端里输入，不回显、不打印、不随机生成。随后它完成：创建数据目录 → 生成 `libraries/notes.env`（权限 600）→ 首次构建镜像 → 启动 → 自行轮询 `/health` 直至就绪。
 
+**命名规则**：第一个库使用干净名字 —— compose 项目 `mindsync`、容器 `mindsync` 与 `postgres`；之后新增的库自动加后缀（项目 `mindsync-<库名>`、容器 `mindsync-<库名>` 与 `postgres-<库名>`），因为容器名在宿主机上必须唯一。名称写在 `libraries/<库名>.env` 的 `MINDSYNC_PROJECT` / `MINDSYNC_CONTAINER_NAME` / `MINDSYNC_POSTGRES_CONTAINER_NAME` 里，可手工覆盖。
+
 写成 env 的 `MINDSYNC_RUN_UID/GID` 决定容器运行身份，取值为**数据目录的属主**。飞牛等存储层只放行已知用户：若把目录强行改归镜像内置的 `10001`，容器会因 ACL 而以 `Permission denied` 启动失败。因此不要手工 chown 该目录。
 
 ### 1.3 再加一个库（例如以后接入文献附件）

@@ -4,6 +4,9 @@ services:
     build: .
     image: mindsync
     restart: unless-stopped
+    # 容器名可覆盖。默认 mindsync / postgres；多个库并存时由 add-library.sh 自动加后缀
+    # （容器名在宿主机上必须唯一）。
+    container_name: ${MINDSYNC_CONTAINER_NAME:-mindsync}
     # 以数据目录的属主身份运行。命名卷默认 10001（镜像内置用户）；
     # bind mount 时由 add-library.sh 写入该目录的属主 uid/gid。
     # 飞牛等存储层只放行已知用户，直接用 10001 会因 ACL 而写入失败。
@@ -35,6 +38,7 @@ services:
     stop_grace_period: 30s
   postgres:
     image: postgres:17-bookworm
+    container_name: ${MINDSYNC_POSTGRES_CONTAINER_NAME:-postgres}
     restart: unless-stopped
     environment:
       POSTGRES_DB: mindsync

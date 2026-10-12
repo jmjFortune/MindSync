@@ -166,6 +166,11 @@ PostgreSQL 继续使用项目级命名卷（不同项目名即天然隔离；且
 4. **`scripts/backup.sh` 与 `scripts/restore.sh` 支持指定库**：新增 `compose()` 包装，
    `MINDSYNC_LIBRARY=<库名>` 时对该库操作，未设置时保持原有单库行为。不加这一层，多库下会**备份/恢复到错误的库**。
 5. **`add-library.sh --no-start`**：只准备数据目录与凭据、不启动，用于"先建空库再恢复备份"的流程（恢复要求目标数据库为空）。
+6. **命名规则改为"第一个库用干净名字"**（按使用要求）：第一个库的 compose 项目为 `mindsync`、容器为 `mindsync` 与 `postgres`；
+   之后新增的库自动加后缀（项目 `mindsync-<库名>`、容器 `mindsync-<库名>` 与 `postgres-<库名>`），
+   因为容器名在宿主机上必须唯一。名称写入 env 的 `MINDSYNC_PROJECT` / `MINDSYNC_CONTAINER_NAME` /
+   `MINDSYNC_POSTGRES_CONTAINER_NAME`，可手工覆盖；`backup.sh` 与 `restore.sh` 从 env 读取项目名，
+   不再假定 `mindsync-<库名>`。原第 4 节表格中"compose 项目名固定为 `mindsync-<库名>`"据此修订。
 
 取消项：原第 9 节第 6 条的 `libraries/zotero.env.example` 未创建。
 理由：库由 `add-library.sh` 生成，一个形似可用实则不能直接使用的占位 env 只会误导；

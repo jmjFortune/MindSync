@@ -61,11 +61,33 @@ if [ -e "$ENV_FILE" ]; then
     exit 1
 fi
 
+# 库的 compose 项目名与容器名。
+# 第一个库用干净名字（项目 mindsync、容器 mindsync 与 postgres）；
+# 之后新增的库必须加后缀，因为容器名在宿主机上必须唯一。
+if [ -n "${MINDSYNC_PROJECT:-}" ]; then
+    PROJECT=$MINDSYNC_PROJECT
+else
+    # 已有其它库（排除模板 example.env）时使用带后缀的名字
+    others=$(ls libraries/*.env 2>/dev/null | grep -v '/example\.env$' || true)
+    if [ -z "$others" ]; then
+        PROJECT="mindsync"
+    else
+        PROJECT="mindsync-$NAME"
+    fi
+fi
+if [ "$PROJECT" = "mindsync" ]; then
+    APP_CONTAINER="mindsync"
+    PG_CONTAINER="postgres"
+else
+    APP_CONTAINER="$PROJECT"
+    PG_CONTAINER="postgres-${PROJECT#mindsync-}"
+fi
+
 # 该库若曾部署过，数据库卷里存着旧口令；此处必须拦住，避免启动后一直认证失败。
-if docker volume inspect "mindsync-${NAME}_postgres_data" >/dev/null 2>&1; then
-    echo "错误: 已存在数据卷 mindsync-${NAME}_postgres_data，说明库 '$NAME' 曾部署过。" >&2
+if docker volume inspect "${PROJECT}_postgres_data" >/dev/null 2>&1; then
+    echo "错误: 已存在数据卷 ${PROJECT}_postgres_data，说明库 '$NAME' 曾部署过。" >&2
     echo "      要重新部署，请先删除该项目（会清空该库的数据库内容）：" >&2
-    echo "        docker compose -p mindsync-$NAME down -v" >&2
+    echo "        docker compose -p $PROJECT down -v" >&2
     exit 1
 fi
 
@@ -104,7 +126,7 @@ MAXBYTES=${MINDSYNC_MAX_FILE_BYTES:-52428800}
 printf '库名      : %s\n' "$NAME"
 printf '端口      : %s\n' "$PORT"
 printf '数据目录  : %s\n' "$DIR"
-printf '项目名    : mindsync-%s\n' "$NAME"
+printf '项目名    : %s   （容器 %s / %s）\n' "$PROJECT" "$APP_CONTAINER" "$PG_CONTAINER"
 printf '监听地址  : %s\n\n' "$BIND"
 
 read_secret() {
@@ -196,6 +218,9 @@ umask 077
     printf 'MINDSYNC_DATA_DIR=%s\n' "$DIR"
     printf 'MINDSYNC_RUN_UID=%s\n' "$RUN_UID"
     printf 'MINDSYNC_RUN_GID=%s\n' "$RUN_GID"
+    printf 'MINDSYNC_PROJECT=%s\n' "$PROJECT"
+    printf 'MINDSYNC_CONTAINER_NAME=%s\n' "$APP_CONTAINER"
+    printf 'MINDSYNC_POSTGRES_CONTAINER_NAME=%s\n' "$PG_CONTAINER"
     printf 'MINDSYNC_MAX_FILE_BYTES=%s\n' "$MAXBYTES"
 } > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
@@ -221,14 +246,13 @@ if [ "$NO_START" = "1" ]; then
 
   数据目录   : $DIR
   凭据文件   : $ENV_FILE              （权限 600）
-  启动       : docker compose -p mindsync-$NAME --env-file $ENV_FILE up -d
+  启动       : docker compose -p $PROJECT --env-file $ENV_FILE up -d
 
 用途: 先准备一个空库，再用 scripts/restore.sh 恢复备份，或稍后再启动。
 SUMMARY
     exit 0
 fi
 
-PROJECT="mindsync-$NAME"
 echo "正在启动 $PROJECT ..."
 # 不使用 --wait: 首次启动含数据库迁移与可读文件树重建，容器可能经历一次重启，
 # compose 会在此时判定失败。改为启动后自行轮询 /health。
@@ -265,14 +289,15 @@ cat <<SUMMARY
   可读文件树 : $DIR/vault/
   历史内容   : $DIR/objects/                  （不要手动删除）
   凭据文件   : $ENV_FILE                      （权限 600，备份脚本不包含它，请另行备份）
-  compose    : -p mindsync-$NAME --env-file $ENV_FILE
+  容器       : $APP_CONTAINER / $PG_CONTAINER
+  compose    : -p $PROJECT --env-file $ENV_FILE
 
 下一步：在对应的 vault 里安装插件 → 填服务地址 → 用该库的管理令牌注册设备。
 
 日常操作（务必带 -p，避免误操作到其它库）:
-  docker compose -p mindsync-$NAME --env-file $ENV_FILE ps
-  docker compose -p mindsync-$NAME --env-file $ENV_FILE logs --tail 100 mindsync
-  docker compose -p mindsync-$NAME --env-file $ENV_FILE down
+  docker compose -p $PROJECT --env-file $ENV_FILE ps
+  docker compose -p $PROJECT --env-file $ENV_FILE logs --tail 100 mindsync
+  docker compose -p $PROJECT --env-file $ENV_FILE down
 SUMMARY
 
 if [ "$BIND" = "0.0.0.0" ]; then

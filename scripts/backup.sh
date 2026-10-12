@@ -6,11 +6,16 @@ cd "$(dirname "$0")/.."
 # 不设置时使用默认 compose 项目（兼容单库用法）。
 compose() {
     if [ -n "${MINDSYNC_LIBRARY:-}" ]; then
-        if [ ! -f "libraries/$MINDSYNC_LIBRARY.env" ]; then
-            echo "错误: 找不到 libraries/$MINDSYNC_LIBRARY.env" >&2
+        envfile="libraries/$MINDSYNC_LIBRARY.env"
+        if [ ! -f "$envfile" ]; then
+            echo "错误: 找不到 $envfile" >&2
             return 1
         fi
-        docker compose -p "mindsync-$MINDSYNC_LIBRARY" --env-file "libraries/$MINDSYNC_LIBRARY.env" "$@"
+        project=$(grep -E '^MINDSYNC_PROJECT=' "$envfile" | cut -d= -f2 || true)
+        if [ -z "$project" ]; then
+            project="mindsync-$MINDSYNC_LIBRARY"
+        fi
+        docker compose -p "$project" --env-file "$envfile" "$@"
     else
         docker compose "$@"
     fi
