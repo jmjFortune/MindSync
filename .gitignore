@@ -11,3 +11,7 @@ backups/
 *.tsbuildinfo
 .DS_Store
 target/
+
+# 每个库的凭据文件（保留模板）
+libraries/*.env
+!libraries/example.env

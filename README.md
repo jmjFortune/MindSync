@@ -10,15 +10,21 @@ Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不�
 
 ## 部署与安装
 
-完整步骤见 [飞牛部署说明](docs/deploy-fnos.md)。在装有 Docker Compose 的机器上先启动服务：
+完整步骤见 [飞牛部署说明](docs/deploy-fnos.md)。服务按**库**组织：一个库 = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。笔记与文献附件是各自独立的库，互不影响；以后新增来源也只是再加一个库。
 
 ```sh
-sh scripts/init-env.sh
-# 编辑 .env，将 MINDSYNC_BIND_ADDRESS 设置为 NAS 局域网 IP。
-docker compose up -d --build --wait
+sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
 ```
 
-初始化脚本生成随机管理令牌和 PostgreSQL 密码，保存在权限为 600 的 `.env` 中，不会打印。保持数据库密码为生成的十六进制字符串，避免连接 URI 中的特殊字符。每台设备在插件设置中填写服务地址，用管理令牌注册一次，之后使用独立设备令牌。
+脚本会提示输入该库的管理令牌与 PostgreSQL 密码（只在你自己的终端里输入，不随机生成、不打印），随后建目录、构建镜像、启动并等待 `/health`。再加一个库：
+
+```sh
+sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
+```
+
+各库必须使用不同的端口与数据目录，所有命令都要显式带 `-p mindsync-<库名>`。`vault/` 是该库最新的**可读文件树**，可在飞牛文件管理器中直接浏览；它只供查看与导出，直接修改不会同步给设备。
+
+旧的单库方式（`sh scripts/init-env.sh` + `.env` + `docker compose up -d --build --wait`）仍然可用，详见部署说明。
 
 将安装包内 `mindsync` 文件夹复制到本地库的 `.obsidian/plugins/`，或库自定义配置目录下的 `plugins/`。它包含 `main.js`、`manifest.json` 和 `styles.css`。在 Obsidian 社区插件设置中启用 MindSync。所有设备首次连接先预览同步计划，再确认合并。
 

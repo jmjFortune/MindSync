@@ -146,3 +146,40 @@ PostgreSQL 继续使用项目级命名卷（不同项目名即天然隔离；且
 | 磁盘占用增长（文献 PDF 体积大） | 各库独立数据目录，便于单独统计与限额；文档提示 |
 | 备份遗漏新库 | 文档补充：备份按库分别执行（`scripts/backup.sh` 在库的 compose 项目下运行） |
 | 移动端引用到文献库 | 默认不安装文献库 vault；文档明确"按 vault 订阅" |
+
+## 13. 实施修订（2026-10-12 实机落地后）
+
+设计在飞牛实机落地时发现三处必须修正的地方，均已实现并验证：
+
+1. **属主策略改为"以数据目录属主身份运行"**（原设计为"一次性容器 chown 10001"）。
+   原因：飞牛存储层只放行已知用户。目录即使 chown 成 `10001`，容器仍以 `Permission denied (os error 13)` 启动失败；
+   而属主为 `admin`（uid 1000）时容器可写（与现有 CouchDB 部署一致）。因此新增 `MINDSYNC_RUN_UID/GID`，
+   由 `add-library.sh` 读取数据目录属主写入 env；`compose.yaml` 用 `user:` 应用它，默认仍为 `10001`（命名卷场景）。
+2. **构建改用 `--network=host`**。飞牛的容器默认 DNS 不可用（容器 `/etc/resolv.conf` 里的解析器不可达），
+   构建时报 `Could not resolve host: deb.debian.org` / `index.crates.io`，与镜像源无关。宿主网络下正常。
+3. **不使用 `compose up --wait`**。首次启动含数据库迁移与可读文件树重建，慢盘上会超过镜像默认健康检查起算期，
+   compose 会在容器重启窗口判定失败。改为 `up -d` 后自行轮询 `/health`（最长 240 秒），并将 `compose.yaml` 的
+   健康检查起算期调整为 120 秒、`retries` 5。
+
+另外两处按实际需要补入，超出原设计范围但属于"收尾"必需：
+
+4. **`scripts/backup.sh` 与 `scripts/restore.sh` 支持指定库**：新增 `compose()` 包装，
+   `MINDSYNC_LIBRARY=<库名>` 时对该库操作，未设置时保持原有单库行为。不加这一层，多库下会**备份/恢复到错误的库**。
+5. **`add-library.sh --no-start`**：只准备数据目录与凭据、不启动，用于"先建空库再恢复备份"的流程（恢复要求目标数据库为空）。
+
+取消项：原第 9 节第 6 条的 `libraries/zotero.env.example` 未创建。
+理由：库由 `add-library.sh` 生成，一个形似可用实则不能直接使用的占位 env 只会误导；
+文献库的"预留"改为部署文档中的一条命令示例与本节说明。
+
+## 14. 实机验证结果（飞牛，2026-10-12）
+
+- 构建：`docker build --network=host` 成功产出 `mindsync:latest`。
+- 建库：`add-library.sh` 端到端通过（建目录 → 生成 env → 启动 → `/health` 通过）。
+- 真实写入：按 `docs/protocol.md` 注册设备、上传对象、提交 put 操作，`/v1/snapshot` 与对象回读校验一致。
+- **可读文件树**：`/vol1/1000/libraries/scratch/vault/acceptance/nas-check.md` 在 NAS 上可 `cat`，属主 `admin`。
+- 双库隔离：两个库同时运行，端口/数据目录/数据库卷互不干扰；`down -v` 停掉其一，另一个 `/health` 不受影响。
+- 备份：`MINDSYNC_LIBRARY=scratch sh scripts/backup.sh` 产出 `database.dump` + `objects.tar.gz` + `checksums.sha256` + `COMPLETE`。
+- 恢复：`--no-start` 建新库后 `MINDSYNC_LIBRARY=<新库> sh scripts/restore.sh` 成功；恢复后 `/health` 通过，
+  `vault/` 重建，文件内容 sha256 与备份前**完全一致**。
+
+未验证（留待真实设备接入时）：macOS/Windows 上的 Obsidian 客户端实机、Android 前台/挂起行为、外网 HTTPS 入口。

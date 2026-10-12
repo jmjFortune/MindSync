@@ -4,6 +4,10 @@ services:
     build: .
     image: mindsync
     restart: unless-stopped
+    # 以数据目录的属主身份运行。命名卷默认 10001（镜像内置用户）；
+    # bind mount 时由 add-library.sh 写入该目录的属主 uid/gid。
+    # 飞牛等存储层只放行已知用户，直接用 10001 会因 ACL 而写入失败。
+    user: "${MINDSYNC_RUN_UID:-10001}:${MINDSYNC_RUN_GID:-10001}"
     environment:
       MINDSYNC_ADMIN_TOKEN: ${MINDSYNC_ADMIN_TOKEN:?Set a strong admin token of at least 32 characters}
       MINDSYNC_DATA: /data
@@ -13,12 +17,21 @@ services:
     ports:
       - "${MINDSYNC_BIND_ADDRESS:-127.0.0.1}:${MINDSYNC_PORT:-8080}:8080"
     volumes:
-      # Named volume inherits image UID 10001 ownership. For a bind mount,
-      # create its source directory first and chown it to 10001:10001.
-      - sync_data:/data
+      # 未设置 MINDSYNC_DATA_DIR 时使用项目命名卷（原有行为）；
+      # 设为绝对路径时成为 bind mount，从而让 /data/vault 可读文件树可直接在
+      # NAS 文件管理器中浏览。每个库必须使用各自独立的数据目录。
+      - ${MINDSYNC_DATA_DIR:-sync_data}:/data
     depends_on:
       postgres:
         condition: service_healthy
+    healthcheck:
+      # 覆盖镜像默认值：首次启动需要数据库迁移与可读文件树重建，
+      # 在 NAS 慢盘上容易超过默认 30s 起算期而被误判为 unhealthy。
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
     stop_grace_period: 30s
   postgres:
     image: postgres:17-bookworm
