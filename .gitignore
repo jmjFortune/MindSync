@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+node_modules/
+plugin/main.js
+plugin/dist/
+dist/
+.env
+nas-data/
+backups/
+*.tsbuildinfo
+.DS_Store
+target/

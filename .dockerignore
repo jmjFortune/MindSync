@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+server/target
+plugin
+node_modules
+backups
+*.tar
+*.tar.gz
+*.dump
+*.log

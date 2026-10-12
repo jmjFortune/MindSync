@@ -2,7 +2,7 @@
 
 日期：2026-10-12
 
-状态：Docker 架构方向已确认；本文件待用户审阅，尚未开始实现或部署。
+状态：用户已批准实施；2026-10-12 更新为 TypeScript 插件、Rust 服务端和 PostgreSQL。
 
 ## 1. 目标与边界
 
@@ -28,13 +28,13 @@ Obsidian 插件（macOS / Windows / Android）
 
 插件使用 TypeScript 和 Obsidian 跨平台 API，不依赖桌面专属的 Node 文件系统或 Electron API。网络请求使用 Obsidian requestUrl；笔记与附件操作使用 Vault API，私有状态通过插件数据目录的 Adapter API 保存。
 
-服务使用 Python、FastAPI、SQLite 和本地文件存储。第一版只运行一个服务实例。SQLite 位于飞牛本地磁盘的 Docker 挂载目录，由服务独占访问，不放在 SMB、NFS 或 WebDAV 挂载上。
+服务使用 Rust、Axum、SQLx、PostgreSQL 和本地文件存储。第一版只运行一个服务实例。PostgreSQL 作为独立 Compose 服务运行，数据目录位于飞牛本地磁盘，不放在 SMB、NFS 或 WebDAV 挂载上。数据库端口默认不向宿主机发布。
 
 ## 3. 服务端数据与文件
 
 持久化目录约定为 `/data`，下设：
 
-- `metadata/`：SQLite 数据库，保存文件身份、版本、操作结果、设备、变更游标和删除记录。
+- PostgreSQL 独立持久化卷：保存文件身份、版本、操作结果、设备、变更游标和删除记录；应用 `/data` 目录只保存对象及文件投影。
 - `objects/`：按 SHA-256 标识的不可变内容，保留历史版本引用的对象。
 - `vault/`：最新笔记及附件的可读文件树，供查看与导出。
 - `tmp/`：未完成的上传临时文件。
@@ -96,7 +96,7 @@ NAS 上的可读文件树只供查看和导出。直接修改它不会被自动�
 
 先验收局域网同步，再验收外网。Docker 部署不会自动使服务可从互联网访问；外网方案取决于现有网络通道，不能假定 FN Connect 能代理任意 Docker 服务。远程连接使用有效证书的 HTTPS，不通过忽略证书校验解决连接问题。没有外网入口时仍交付可用的局域网版本，并明确外网未验收。
 
-备份通过服务的备份流程或停服后复制完整数据目录完成，不能在活跃 SQLite WAL 写入时仅复制 `.db` 文件。
+备份暂停同步服务写入，用 pg_dump 导出 PostgreSQL，再归档不可变对象目录；恢复时同时恢复数据库和对象，并重建文件投影。不能只备份 PostgreSQL 数据卷或只备份 Markdown。
 
 ## 9. 后续扩展边界
 
@@ -122,7 +122,9 @@ RAG 复用权威内容读取和持久化变更游标。索引消费者持久化�
 - Obsidian Mobile development：https://docs.obsidian.md/Plugins/Getting%20started/Mobile%20development
 - Obsidian Vault API：https://docs.obsidian.md/Plugins/Vault
 - Obsidian requestUrl：https://docs.obsidian.md/Reference/TypeScript%20API/requestUrl
-- SQLite WAL：https://www.sqlite.org/wal.html
+- PostgreSQL backup：https://www.postgresql.org/docs/current/app-pgdump.html
+- Axum：https://docs.rs/axum/latest/axum/
+- SQLx：https://docs.rs/sqlx/latest/sqlx/
 - Remotely Save：https://github.com/remotely-save/remotely-save
 - Self-hosted LiveSync：https://github.com/vrtmrz/obsidian-livesync
 

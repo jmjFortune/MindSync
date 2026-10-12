@@ -1,0 +1,37 @@
+services:
+  server:
+    build: .
+    restart: unless-stopped
+    environment:
+      NAS_SYNC_ADMIN_TOKEN: ${NAS_SYNC_ADMIN_TOKEN:?Set a strong admin token of at least 32 characters}
+      NAS_SYNC_DATA: /data
+      NAS_SYNC_PORT: "8080"
+      NAS_SYNC_MAX_FILE_BYTES: ${NAS_SYNC_MAX_FILE_BYTES:-52428800}
+      DATABASE_URL: postgresql://nas_sync:${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}@postgres:5432/nas_sync
+    ports:
+      - "${NAS_SYNC_BIND_ADDRESS:-127.0.0.1}:${NAS_SYNC_PORT:-8080}:8080"
+    volumes:
+      # Named volume inherits image UID 10001 ownership. For a bind mount,
+      # create its source directory first and chown it to 10001:10001.
+      - sync_data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 30s
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nas_sync
+      POSTGRES_USER: nas_sync
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nas_sync -d nas_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+volumes:
+  sync_data:
+  postgres_data:

@@ -1,0 +1,17 @@
+import {mkdir,copyFile,readFile,rm,writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {resolve,dirname} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {execFileSync} from 'node:child_process';
+const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+const manifest=JSON.parse(await readFile(resolve(root,'plugin/manifest.json'),'utf8'));
+const dir=resolve(root,'dist',manifest.id);await mkdir(dir,{recursive:true});
+for(const file of ['main.js','manifest.json','styles.css'])await copyFile(resolve(root,'plugin',file),resolve(dir,file));
+const archive=resolve(root,'dist',`nas-sync-plugin-${manifest.version}.zip`);await rm(archive,{force:true});
+execFileSync('zip',['-qr',archive,manifest.id],{cwd:resolve(root,'dist')});
+console.log(`Plugin package: ${archive}`);
+execFileSync('tar',['--exclude=.git','--exclude=node_modules','--exclude=target','--exclude=.env','--exclude=dist','--exclude=main.js','--exclude=plugin/dist','-czf',resolve(root,'dist',`nas-sync-source-${manifest.version}.tar.gz`),'README.md','docs','server','plugin','scripts','Dockerfile','compose.yaml','.dockerignore','.env.example','.gitignore'],{cwd:root});
+console.log('Source archive created without credentials, build caches or local data');
+const names=[`nas-sync-plugin-${manifest.version}.zip`,`nas-sync-source-${manifest.version}.tar.gz`];
+const checksums=await Promise.all(names.map(async name=>`${createHash('sha256').update(await readFile(resolve(root,'dist',name))).digest('hex')}  ${name}`));
+await writeFile(resolve(root,'dist','checksums.sha256'),checksums.join('\n')+'\n');
