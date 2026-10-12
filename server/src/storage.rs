@@ -268,7 +268,7 @@ impl Storage {
     pub fn projection(&self, path: &str, hash: &str, size: i64) -> io::Result<()> {
         let mut object = self.verify(hash, Some(size))?;
         let (parent, leaf) = self.vault.parent(path, true)?;
-        let temp_name = format!(".nas-sync-{}", Uuid::new_v4());
+        let temp_name = format!(".mindsync-{}", Uuid::new_v4());
         let mut file = parent.create(&temp_name)?;
         let result = (|| {
             io::copy(&mut object, &mut file)?;

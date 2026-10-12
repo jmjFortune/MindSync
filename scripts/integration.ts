@@ -3,10 +3,10 @@ import {Api} from '../plugin/src/api';
 import {SyncEngine} from '../plugin/src/engine';
 import {emptyState} from '../plugin/src/types';
 import {MemoryLocal, string} from '../plugin/tests/helpers';
-const url = process.env.NAS_SYNC_TEST_URL ?? `http://127.0.0.1:${process.env.NAS_SYNC_PORT ?? '18080'}`;
+const url = process.env.MINDSYNC_TEST_URL ?? `http://127.0.0.1:${process.env.MINDSYNC_PORT ?? '18080'}`;
 assert(['127.0.0.1','localhost'].includes(new URL(url).hostname),'Integration tests only run against a disposable loopback service');
-const token = process.env.NAS_SYNC_ADMIN_TOKEN;
-assert(token,'NAS_SYNC_ADMIN_TOKEN required');
+const token = process.env.MINDSYNC_ADMIN_TOKEN;
+assert(token,'MINDSYNC_ADMIN_TOKEN required');
 function api(credential: string, lose = {next: false}) {
   return new Api(async(method,path,body)=>{
     const response=await fetch(url+path,{method,headers:{Authorization:`Bearer ${credential}`,'Content-Type':body instanceof Uint8Array?'application/octet-stream':'application/json'},body:body instanceof Uint8Array?body.slice().buffer:body});

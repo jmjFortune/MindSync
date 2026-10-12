@@ -149,10 +149,10 @@ fn valid_id(id: &str) -> bool {
 
 pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + Send + Sync>> {
     if config.admin_token.len() < 32 || config.admin_token.chars().any(char::is_whitespace) {
-        return Err("NAS_SYNC_ADMIN_TOKEN must be a strong token of at least 32 characters with no whitespace".into());
+        return Err("MINDSYNC_ADMIN_TOKEN must be a strong token of at least 32 characters with no whitespace".into());
     }
     if config.max_file_bytes == 0 || config.max_file_bytes > i64::MAX as usize {
-        return Err("NAS_SYNC_MAX_FILE_BYTES must be positive".into());
+        return Err("MINDSYNC_MAX_FILE_BYTES must be positive".into());
     }
     let pool = PgPoolOptions::new()
         .max_connections(10)

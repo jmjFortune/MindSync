@@ -1,4 +1,4 @@
-# Obsidian NAS Sync 第一版设计
+# MindSync 第一版设计
 
 日期：2026-10-12
 

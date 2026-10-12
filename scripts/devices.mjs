@@ -1,7 +1,7 @@
-// NAS_SYNC_ADMIN_TOKEN is read only from the environment and never printed.
-const base=process.env.NAS_SYNC_URL;
-const token=process.env.NAS_SYNC_ADMIN_TOKEN;
-if(!base||!token)throw new Error('Set NAS_SYNC_URL and NAS_SYNC_ADMIN_TOKEN.');
+// MINDSYNC_ADMIN_TOKEN is read only from the environment and never printed.
+const base=process.env.MINDSYNC_URL;
+const token=process.env.MINDSYNC_ADMIN_TOKEN;
+if(!base||!token)throw new Error('Set MINDSYNC_URL and MINDSYNC_ADMIN_TOKEN.');
 const url=new URL(base);
 if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error('Invalid server URL.');
 const action=process.argv[2]??'list';

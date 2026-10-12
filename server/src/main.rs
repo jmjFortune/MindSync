@@ -1,4 +1,4 @@
-use nas_sync_server::{Config, app};
+use mindsync_server::{Config, app};
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
@@ -8,14 +8,14 @@ async fn main() {
 }
 async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let config = Config {
-        data: std::env::var("NAS_SYNC_DATA")?.into(),
+        data: std::env::var("MINDSYNC_DATA")?.into(),
         database_url: std::env::var("DATABASE_URL")?,
-        admin_token: std::env::var("NAS_SYNC_ADMIN_TOKEN")?,
-        max_file_bytes: std::env::var("NAS_SYNC_MAX_FILE_BYTES")
+        admin_token: std::env::var("MINDSYNC_ADMIN_TOKEN")?,
+        max_file_bytes: std::env::var("MINDSYNC_MAX_FILE_BYTES")
             .unwrap_or_else(|_| "52428800".into())
             .parse()?,
     };
-    let port = std::env::var("NAS_SYNC_PORT")
+    let port = std::env::var("MINDSYNC_PORT")
         .unwrap_or_else(|_| "8080".into())
         .parse::<u16>()?;
     let router = app(config).await?;

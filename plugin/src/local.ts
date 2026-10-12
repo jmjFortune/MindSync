@@ -76,7 +76,7 @@ export class ObsidianLocal implements Local {
       if (equivalent) {
         // Two moves are required on case insensitive file systems, including for directories.
         const slash = parent.lastIndexOf('/');
-        const temporary = `${slash < 0 ? '' : parent.slice(0,slash+1)}NAS Sync Local Rename ${crypto.randomUUID()}`;
+        const temporary = `${slash < 0 ? '' : parent.slice(0,slash+1)}MindSync Local Rename ${crypto.randomUUID()}`;
         const original = equivalent.path;
         this.folderMoves[temporary]={original,target:parent}; await this.save(this.latestState);
         await this.app.vault.rename(equivalent, temporary);

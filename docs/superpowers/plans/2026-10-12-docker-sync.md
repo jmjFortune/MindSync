@@ -1,11 +1,11 @@
-# Docker NAS Sync Implementation Plan
+# Docker MindSync Implementation Plan
 
 > For agentic workers: use subagent-driven-development for implementation and independent reviews. Steps use checkbox syntax.
 
 **Goal:** 交付可安装插件和 Docker 服务，通过真实 API 验证双向同步与故障恢复。
 **Architecture:** 本地优先的插件以版本化 HTTP API 连接飞牛服务。服务以 PostgreSQL 事务和不可变对象管理权威版本，普通文件树可重建。
 **Tech Stack:** TypeScript、Obsidian API、Rust Axum SQLx、PostgreSQL、Docker Compose。
-**Spec:** docs/superpowers/specs/2026-10-12-obsidian-nas-sync-design.md
+**Spec:** docs/superpowers/specs/2026-10-12-mindsync-design.md
 
 ## Global Constraints
 单用户单库；macOS/Windows/Android；前台同步；附件默认 50 MiB；只有 NAS 本地后端；冲突保留副本；不复制第三方插件代码；外网与实机验收单独报告。

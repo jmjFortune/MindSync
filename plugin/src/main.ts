@@ -5,7 +5,7 @@ import {PlanItem, SyncEngine} from './engine';
 import {ObsidianLocal} from './local';
 import {FileRecord, included, SyncError} from './types';
 interface Settings { server: string; token: string; deviceName: string; paused: boolean }
-export default class NasSync extends Plugin {
+export default class MindSync extends Plugin {
   settings: Settings = {server:'',token:'',deviceName:Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'Mac' : 'PC',paused:false};
   private connection=new ConnectionContext(()=>this.settings);
   engine?: SyncEngine; local?: ObsidianLocal; api!: Api;
@@ -15,7 +15,7 @@ export default class NasSync extends Plugin {
     this.settings = {...this.settings,...await this.loadData()};
     this.statusEl = this.addStatusBarItem(); this.statusEl.setAttribute('role','status'); this.statusEl.setAttribute('aria-live','polite');
     this.statusEl.addEventListener('click',()=>this.showStatus());
-    this.addRibbonIcon('refresh-cw','NAS Sync：立即同步',()=>void this.sync(true));
+    this.addRibbonIcon('refresh-cw','MindSync：立即同步',()=>void this.sync(true));
     this.addCommand({id:'sync',name:'立即同步',callback:()=>void this.sync(true)});
     this.addCommand({id:'preview',name:'预览同步计划',callback:()=>void this.preview()});
     this.addCommand({id:'status',name:'查看状态与冲突',callback:()=>this.showStatus()});
@@ -86,12 +86,12 @@ export default class NasSync extends Plugin {
   showStatus(){
     const modal=new Modal(this.app); modal.setTitle('NAS 同步状态'); const box=modal.contentEl;
     box.createEl('p',{text:this.settings.paused?'同步已暂停':this.status});
-    if(this.lastError)box.createEl('p',{text:this.lastError,cls:'nas-sync-error',attr:{role:'alert'}});
-    box.createEl('p',{text:`待同步操作：${this.engine?.state.pending.length??0}；最后成功：${this.engine?.state.lastSuccess ? new Date(this.engine.state.lastSuccess).toLocaleString():'尚无'}`,cls:'nas-sync-summary'});
+    if(this.lastError)box.createEl('p',{text:this.lastError,cls:'mindsync-error',attr:{role:'alert'}});
+    box.createEl('p',{text:`待同步操作：${this.engine?.state.pending.length??0}；最后成功：${this.engine?.state.lastSuccess ? new Date(this.engine.state.lastSuccess).toLocaleString():'尚无'}`,cls:'mindsync-summary'});
     const capacity=box.createEl('p',{text:'正在读取 NAS 存储信息…'});
     void this.api.info().then(info=>capacity.setText(`内容存储：${(info.storage_bytes/1048576).toFixed(1)} MiB；单文件上限：${(info.max_file_bytes/1048576).toFixed(1)} MiB。历史内容暂不自动清理。`)).catch(()=>capacity.setText('暂时无法读取 NAS 存储信息'));
     box.createEl('p',{text:'Android 关闭应用或被系统挂起时不能保证同步。删除保留在本地 .trash；附件替换备份保存在插件状态日志及 .trash 中。NAS 可读文件树只供查看和导出。'});
-    const list=box.createEl('ul',{cls:'nas-sync-list'});
+    const list=box.createEl('ul',{cls:'mindsync-list'});
     for(const path of this.engine?.state.conflicts??[]){
       const item=list.createEl('li'); const details=this.engine?.state.conflictDetails?.[path];
       item.createEl('p',{text:details ? `${path}；来源：${details.source}；设备：${details.device}；${new Date(details.time).toLocaleString()}` : path});
@@ -132,12 +132,12 @@ export default class NasSync extends Plugin {
 }
 class Preview extends Modal {
   constructor(app:App,private items:PlanItem[],private run:()=>void){super(app);}
-  onOpen(){this.setTitle('同步预览');this.contentEl.createEl('p',{text:'预览不会修改文件。首次连接出现不同内容时，会保存本地冲突副本再下载远端。',cls:'nas-sync-summary'});const list=this.contentEl.createEl('ul',{cls:'nas-sync-list'});for(const item of this.items)list.createEl('li',{text:`${item.action}：${item.path}`});if(!this.items.length)list.createEl('li',{text:'没有待同步变更'});new Setting(this.contentEl).addButton(b=>b.setButtonText('关闭').onClick(()=>this.close())).addButton(b=>b.setButtonText('按预览同步').setCta().onClick(()=>{this.close();this.run();}));}
+  onOpen(){this.setTitle('同步预览');this.contentEl.createEl('p',{text:'预览不会修改文件。首次连接出现不同内容时，会保存本地冲突副本再下载远端。',cls:'mindsync-summary'});const list=this.contentEl.createEl('ul',{cls:'mindsync-list'});for(const item of this.items)list.createEl('li',{text:`${item.action}：${item.path}`});if(!this.items.length)list.createEl('li',{text:'没有待同步变更'});new Setting(this.contentEl).addButton(b=>b.setButtonText('关闭').onClick(()=>this.close())).addButton(b=>b.setButtonText('按预览同步').setCta().onClick(()=>{this.close();this.run();}));}
 }
 class NasSettings extends PluginSettingTab {
-  constructor(app:App,private plugin:NasSync){super(app,plugin);}
-  display(){const {containerEl:el}=this;el.empty();el.createEl('h2',{text:'NAS Sync'});
-    el.createEl('p',{text:'连接自己的飞牛同步服务。第一次同步建议先预览。',cls:'nas-sync-summary'});
+  constructor(app:App,private plugin:MindSync){super(app,plugin);}
+  display(){const {containerEl:el}=this;el.empty();el.createEl('h2',{text:'MindSync'});
+    el.createEl('p',{text:'连接自己的飞牛同步服务。第一次同步建议先预览。',cls:'mindsync-summary'});
     new Setting(el).setName('服务器地址').setDesc('局域网示例 http://192.168.1.10:8080；外网使用 HTTPS。').addText(t=>t.setValue(this.plugin.settings.server).setPlaceholder('https://notes.example.com').onChange(async value=>{this.plugin.settings.server=value.trim();await this.plugin.saveSettings();}));
     new Setting(el).setName('设备名称').setDesc('用于识别设备和冲突副本；重新加载插件后生效。').addText(t=>t.setValue(this.plugin.settings.deviceName).onChange(async value=>{this.plugin.settings.deviceName=value.trim()||'device';await this.plugin.saveSettings();}));
     new Setting(el).setName('设备令牌').setDesc('仅保存在本地插件配置。不要使用管理令牌作为日常同步凭证。').addText(t=>{t.inputEl.type='password';t.setValue(this.plugin.settings.token).onChange(async value=>{this.plugin.settings.token=value.trim();await this.plugin.saveSettings();});});

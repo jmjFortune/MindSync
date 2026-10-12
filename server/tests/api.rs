@@ -4,7 +4,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use http_body_util::BodyExt;
-use nas_sync_server::{Config, app};
+use mindsync_server::{Config, app};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 

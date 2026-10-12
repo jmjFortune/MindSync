@@ -1,4 +1,4 @@
-# NAS Sync HTTP API v1
+# MindSync HTTP API v1
 
 除 GET /health 外，全部 API 使用 Authorization: Bearer <token>。单用户单库，vault_id 由 GET /v1/info 返回。JSON 的文件记录为 {id,path,revision,hash,size,deleted}，hash 在删除记录中可保留旧对象哈希。所有 revision 为全库递增整数，与变更 cursor 相同。
 

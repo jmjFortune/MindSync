@@ -20,7 +20,7 @@ export class SyncEngine {
         if (!groups[from]) {
           const targets: Record<string,string>={};
           for (const file of Object.values(this.state.files)) if (!file.deleted && file.path.startsWith(from+'/')) targets[file.id]=to+file.path.slice(from.length);
-          groups[from]={temporary:`NAS Sync Rename ${crypto.randomUUID()}`,targets};
+          groups[from]={temporary:`MindSync Rename ${crypto.randomUUID()}`,targets};
         }
         break;
       }
@@ -247,9 +247,9 @@ export class SyncEngine {
     const split = dot > slash ? dot : path.length;
     const tag = this.device.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 12) || 'device';
     const paths=[...this.remotePaths,...await this.local.list(),...Object.values(this.state.files).filter(f=>!f.deleted).map(f=>f.path)];
-    let root='NAS Sync Conflicts';
+    let root='MindSync Conflicts';
     for (let i=1;;i++) {
-      const candidate=i===1 ? 'NAS Sync Conflicts' : `NAS Sync Conflicts ${i}`;
+      const candidate=i===1 ? 'MindSync Conflicts' : `MindSync Conflicts ${i}`;
       if (paths.some(p=>pathKey(p)===pathKey(candidate))) continue;
       root=paths.find(p=>pathKey(p.split('/')[0])===pathKey(candidate))?.split('/')[0] ?? candidate; break;
     }

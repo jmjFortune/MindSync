@@ -1,5 +1,5 @@
-.nas-sync-summary { color: var(--text-muted); margin-block: 8px 16px; }
-.nas-sync-list { max-height: 55vh; overflow: auto; padding-left: 1.5em; }
-.nas-sync-error { color: var(--text-error); }
-.nas-sync-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-.nas-sync-conflict { color: var(--text-warning); }
+.mindsync-summary { color: var(--text-muted); margin-block: 8px 16px; }
+.mindsync-list { max-height: 55vh; overflow: auto; padding-left: 1.5em; }
+.mindsync-error { color: var(--text-error); }
+.mindsync-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.mindsync-conflict { color: var(--text-warning); }

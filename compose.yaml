@@ -1,15 +1,17 @@
+name: mindsync
 services:
-  server:
+  mindsync:
     build: .
+    image: mindsync
     restart: unless-stopped
     environment:
-      NAS_SYNC_ADMIN_TOKEN: ${NAS_SYNC_ADMIN_TOKEN:?Set a strong admin token of at least 32 characters}
-      NAS_SYNC_DATA: /data
-      NAS_SYNC_PORT: "8080"
-      NAS_SYNC_MAX_FILE_BYTES: ${NAS_SYNC_MAX_FILE_BYTES:-52428800}
-      DATABASE_URL: postgresql://nas_sync:${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}@postgres:5432/nas_sync
+      MINDSYNC_ADMIN_TOKEN: ${MINDSYNC_ADMIN_TOKEN:?Set a strong admin token of at least 32 characters}
+      MINDSYNC_DATA: /data
+      MINDSYNC_PORT: "8080"
+      MINDSYNC_MAX_FILE_BYTES: ${MINDSYNC_MAX_FILE_BYTES:-52428800}
+      DATABASE_URL: postgresql://mindsync:${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}@postgres:5432/mindsync
     ports:
-      - "${NAS_SYNC_BIND_ADDRESS:-127.0.0.1}:${NAS_SYNC_PORT:-8080}:8080"
+      - "${MINDSYNC_BIND_ADDRESS:-127.0.0.1}:${MINDSYNC_PORT:-8080}:8080"
     volumes:
       # Named volume inherits image UID 10001 ownership. For a bind mount,
       # create its source directory first and chown it to 10001:10001.
@@ -22,13 +24,13 @@ services:
     image: postgres:17-bookworm
     restart: unless-stopped
     environment:
-      POSTGRES_DB: nas_sync
-      POSTGRES_USER: nas_sync
+      POSTGRES_DB: mindsync
+      POSTGRES_USER: mindsync
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nas_sync -d nas_sync"]
+      test: ["CMD-SHELL", "pg_isready -U mindsync -d mindsync"]
       interval: 5s
       timeout: 5s
       retries: 10

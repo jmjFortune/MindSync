@@ -1,1 +1,1 @@
-{"id":"nas-sync","name":"NAS Sync","version":"0.1.0","minAppVersion":"1.8.0","description":"通过自己的 NAS 同步笔记与附件，支持离线编辑、冲突保护和版本恢复。","author":"NAS Sync contributors","isDesktopOnly":false}
+{"id":"mindsync","name":"MindSync","version":"0.1.0","minAppVersion":"1.8.0","description":"通过自己的 NAS 同步笔记与附件，支持离线编辑、冲突保护和版本恢复。","author":"MindSync contributors","isDesktopOnly":false}

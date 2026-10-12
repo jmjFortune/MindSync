@@ -2,13 +2,13 @@
 
 ## 1. 准备目录和启动服务
 
-需要飞牛上可用的 Docker 和 Docker Compose v2。将源码包解压到 NAS 的本地磁盘目录，例如自行选择的 `docker/obsidian-nas-sync`，通过终端进入该目录。首次构建需能下载 Rust crates 和 Docker 镜像；构建较慢属于正常现象。
+需要飞牛上可用的 Docker 和 Docker Compose v2。将源码包解压到 NAS 的本地磁盘目录，例如自行选择的 `docker/mindsync`，通过终端进入该目录。首次构建需能下载 Rust crates 和 Docker 镜像；构建较慢属于正常现象。
 
 ```sh
 sh scripts/init-env.sh
 ```
 
-编辑生成的 `.env`：保留随机密钥，将 `NAS_SYNC_BIND_ADDRESS` 改成 NAS 的实际局域网 IP；`NAS_SYNC_PORT=8080` 可改为未占用的端口。默认监听 `127.0.0.1`，只适合本机或反向代理，手机无法直接访问。管理令牌用于注册和撤销设备，应妥善保存；日常同步使用每设备独立令牌。数据库密码保留生成的十六进制值。
+编辑生成的 `.env`：保留随机密钥，将 `MINDSYNC_BIND_ADDRESS` 改成 NAS 的实际局域网 IP；`MINDSYNC_PORT=8080` 可改为未占用的端口。默认监听 `127.0.0.1`，只适合本机或反向代理，手机无法直接访问。管理令牌用于注册和撤销设备，应妥善保存；日常同步使用每设备独立令牌。数据库密码保留生成的十六进制值。
 
 ```sh
 docker compose config --quiet
@@ -18,18 +18,18 @@ docker compose ps
 
 从局域网浏览器访问 `http://NAS局域网IP:8080/health`。数据库端口不对宿主机发布。服务只支持一个实例，不能为同一数据卷启动两个应用服务。
 
-Compose 使用 `sync_data` 和 `postgres_data` 两个持久化命名卷。重启或 `docker compose down` 后数据保留；不要使用 `down -v`，它会删除数据卷。如果希望在飞牛文件管理器查看文件树，可将 `server.volumes` 中的 `sync_data:/data` 改为 NAS 本地目录的绑定挂载，先创建目录并设所有者为 UID/GID `10001:10001`。数据库卷继续使用本地磁盘，不能放到 SMB/NFS 挂载。
+Compose 使用 `sync_data` 和 `postgres_data` 两个持久化命名卷。重启或 `docker compose down` 后数据保留；不要使用 `down -v`，它会删除数据卷。如果希望在飞牛文件管理器查看文件树，可将 `mindsync.volumes` 中的 `sync_data:/data` 改为 NAS 本地目录的绑定挂载，先创建目录并设所有者为 UID/GID `10001:10001`。数据库卷继续使用本地磁盘，不能放到 SMB/NFS 挂载。
 
 应用数据包括 `objects/`（不可变历史内容）、`vault/`（最新可读文件树）和 `tmp/`（上传临时文件）。`vault/` 只供查看和导出，直接修改不会同步给设备，并会在重启修复时丢弃。不要手动删除 `objects/`。历史版本暂不自动清理。
 
 ## 2. 安装客户端
 
-每台设备建立或选择本地 Obsidian 库，将安装包内 `nas-sync/` 放入该库 `.obsidian/plugins/`。自定义配置目录使用对应的 `plugins/` 子目录。Android 可通过 USB、系统文件管理器或 NAS 文件共享复制；文件复制后重启 Obsidian。
+每台设备建立或选择本地 Obsidian 库，将安装包内 `mindsync/` 放入该库 `.obsidian/plugins/`。自定义配置目录使用对应的 `plugins/` 子目录。Android 可通过 USB、系统文件管理器或 NAS 文件共享复制；文件复制后重启 Obsidian。
 
-在社区插件设置中启用 NAS Sync，打开插件设置：
+在社区插件设置中启用 MindSync，打开插件设置：
 
 1. 填写 `http://NAS局域网IP:8080`，为设备起不同名称，例如 `Mac`、`Windows`、`Android-phone`、`Android-tablet`。
-2. 在“注册此设备”输入 `.env` 中的 `NAS_SYNC_ADMIN_TOKEN`，点击注册。管理令牌不保存在插件配置中。
+2. 在“注册此设备”输入 `.env` 中的 `MINDSYNC_ADMIN_TOKEN`，点击注册。管理令牌不保存在插件配置中。
 3. 点击测试连接，再预览同步计划。两端都有内容时确认首次合并，冲突副本会保留本地内容。
 4. 在其余设备重复注册，使用各自独立的设备令牌。
 
@@ -58,7 +58,7 @@ sh scripts/backup.sh /实际备份路径/2026-10-12
 恢复到全新的 Compose 项目和空数据卷，禁止覆盖已有库。先准备 `.env`；管理令牌可重新生成，数据库密码匹配新项目即可。原设备令牌的哈希在数据库备份中，因此恢复后原设备令牌仍然有效。
 
 ```sh
-COMPOSE_PROJECT_NAME=nas-sync-restored NAS_SYNC_PORT=8081 sh scripts/restore.sh /实际备份目录
+COMPOSE_PROJECT_NAME=mindsync-restored MINDSYNC_PORT=8081 sh scripts/restore.sh /实际备份目录
 ```
 
 新项目会使用独立卷。确认健康、笔记和历史正确后，再切换插件地址或反向代理。恢复保留备份时的文件版本和游标，但更换 vault ID 表示新的历史分支，应用启动会重建 `vault/`。现有客户端会报告库身份不匹配并停止，避免旧游标跳过恢复后的内容。先完整保留原本地库，再建立新的本地库连接恢复后的服务；需要保留备份之后的编辑时，将原库内容复制到新库并预览合并。不要通过删除原库状态文件强行接续。不要在恢复验收完成前删除原项目。
@@ -69,7 +69,7 @@ COMPOSE_PROJECT_NAME=nas-sync-restored NAS_SYNC_PORT=8081 sh scripts/restore.sh 
 
 设备丢失时用管理令牌调用 `GET /v1/devices`，找到设备 ID，再调用 `DELETE /v1/devices/{id}`；见[协议](protocol.md)。撤销即时拒绝该设备后续请求。管理令牌泄露时更改 `.env` 并重建容器；已注册设备令牌仍可使用，必要时逐个撤销。
 
-故障定位先看 `docker compose ps` 和 `docker compose logs --tail 100 server`。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
+故障定位先看 `docker compose ps` 和 `docker compose logs --tail 100 mindsync`。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
 
 装有 Node.js 的管理电脑也可使用辅助脚本。通过环境变量读取凭证，脚本不打印令牌：
 
@@ -77,11 +77,11 @@ COMPOSE_PROJECT_NAME=nas-sync-restored NAS_SYNC_PORT=8081 sh scripts/restore.sh 
 set -a
 . ./.env
 set +a
-export NAS_SYNC_URL=http://NAS局域网IP:8080
+export MINDSYNC_URL=http://NAS局域网IP:8080
 node scripts/devices.mjs list
 node scripts/devices.mjs revoke 从列表选出的设备ID
 ```
 
 ## 6. 目录大小写重命名
 
-例如 `Notes/` 改为 `notes/` 时，插件先把该目录内已同步文件的远端身份迁入唯一的 `NAS Sync Rename ...` 临时目录，全部确认后再迁入目标目录。文件身份不变，过程可恢复，但其他设备可能短暂看到临时目录。重命名期间其他设备在旧目录新建文件时会报告路径冲突并保留待同步计划；先解决新文件的目录归属再重试。不要手动删除临时目录来结束迁移。
+例如 `Notes/` 改为 `notes/` 时，插件先把该目录内已同步文件的远端身份迁入唯一的 `MindSync Rename ...` 临时目录，全部确认后再迁入目标目录。文件身份不变，过程可恢复，但其他设备可能短暂看到临时目录。重命名期间其他设备在旧目录新建文件时会报告路径冲突并保留待同步计划；先解决新文件的目录归属再重试。不要手动删除临时目录来结束迁移。
