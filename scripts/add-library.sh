@@ -114,29 +114,59 @@ read_secret() {
     printf %s "$value"
 }
 
-printf '请输入该库的管理令牌（至少 32 位；注册设备时使用）: '
-TOKEN=$(read_secret)
-printf '请再输入一次确认: '
-TOKEN2=$(read_secret)
-printf '请输入该库的 PostgreSQL 密码: '
-DBPW=$(read_secret)
-printf '请再输入一次确认: '
-DBPW2=$(read_secret)
+TOKEN=""
+DBPW=""
+attempt=0
+while :; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt 10 ]; then
+        echo "错误: 输入失败次数过多，已放弃。" >&2
+        exit 1
+    fi
+    printf '请输入该库的管理令牌（至少 32 位；注册设备时使用）: '
+    TOKEN=$(read_secret)
+    if [ "${#TOKEN}" -lt 32 ]; then
+        printf '错误: 管理令牌需要至少 32 位，你输入了 %s 位。服务端会拒绝更短的令牌，请重新输入。\n\n' "${#TOKEN}"
+        continue
+    fi
+    printf '请再输入一次确认: '
+    TOKEN2=$(read_secret)
+    if [ "$TOKEN" != "$TOKEN2" ]; then
+        printf '错误: 两次输入不一致，请重新输入。\n\n'
+        continue
+    fi
+    if printf %s "$TOKEN" | grep -qE '[^A-Za-z0-9_.~!@%^&*+=:;,@-]'; then
+        printf '错误: 管理令牌只允许 A-Za-z0-9 与  - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
+        continue
+    fi
+    break
+done
 
-[ -n "$TOKEN" ] || { echo "错误: 管理令牌不能为空" >&2; exit 1; }
-[ "$TOKEN" = "$TOKEN2" ] || { echo "错误: 两次输入的管理令牌不一致" >&2; exit 1; }
-if [ "${#TOKEN}" -lt 32 ]; then
-    echo "错误: 管理令牌至少需要 32 位" >&2
-    exit 1
-fi
-[ -n "$DBPW" ] || { echo "错误: 数据库密码不能为空" >&2; exit 1; }
-[ "$DBPW" = "$DBPW2" ] || { echo "错误: 两次输入的数据库密码不一致" >&2; exit 1; }
-
-# 拒绝会破坏 env 文件与连接 URI 的字符，避免转义问题
-if printf %s "$TOKEN$DBPW" | grep -qE '[^A-Za-z0-9_.~!@%^&*+=:;,@-]'; then
-    echo "错误: 管理令牌与数据库密码只允许 A-Za-z0-9 以及  - _ . ~ ! @ % ^ & * + = : ; ,  这些字符" >&2
-    exit 1
-fi
+attempt=0
+while :; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt 10 ]; then
+        echo "错误: 输入失败次数过多，已放弃。" >&2
+        exit 1
+    fi
+    printf '请输入该库的 PostgreSQL 密码（长度不限）: '
+    DBPW=$(read_secret)
+    if [ -z "$DBPW" ]; then
+        printf '错误: 密码不能为空，请重新输入。\n\n'
+        continue
+    fi
+    printf '请再输入一次确认: '
+    DBPW2=$(read_secret)
+    if [ "$DBPW" != "$DBPW2" ]; then
+        printf '错误: 两次输入不一致，请重新输入。\n\n'
+        continue
+    fi
+    if printf %s "$DBPW" | grep -qE '[^A-Za-z0-9_.~!@%^&*+=:;,@-]'; then
+        printf '错误: 数据库密码只允许 A-Za-z0-9 与  - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
+        continue
+    fi
+    break
+done
 
 mkdir -p "$DIR"
 
