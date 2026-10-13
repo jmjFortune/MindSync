@@ -33,3 +33,11 @@ User requires English for everything except documentation. Translate UI, errors,
 - Single-worker plugin tests: 73 passed; build, source language audit, CLI usage, shell syntax and Compose validation passed. ZIP/source contents, credential exclusions and SHA-256 checksums passed.
 - Both installed plugins updated to 0.2.1; credentials, pause settings and journal slots verified unchanged.
 - Source/scripts/templates synced to NAS; backend healthy with unchanged image, and notes.env remains mode 600. No backend restart was needed.
+
+## Configuration sync — 2026-10-13
+
+User requests Obsidian settings and plugin sync; conflict behavior stays unchanged and history capacity work remains deferred.
+- Explore code, public adapter contract and LiveSync configuration guidance: complete.
+- Write concrete scope/compatibility/import/recovery/acceptance design: complete; docs/superpowers/specs/2026-10-13-configuration-sync-design.md.
+- User design review required by brainstorming: pending. No feature code or production settings changed.
+- Implementation, single-worker regression, isolated NAS acceptance, backup/deploy and plugin update: after design approval.
