@@ -72,6 +72,7 @@ pub(super) fn verify_file(storage: &Storage, file: &FileRecord) -> io::Result<()
     Ok(())
 }
 pub(super) fn project_file(storage: &Storage, file: &FileRecord) -> io::Result<()> {
+    let storage = storage.for_scope(file.scope);
     if file.chunked {
         storage.projection_chunks(&file.path, &file.hash, file.size, &parts(file))
     } else {

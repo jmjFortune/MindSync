@@ -1,6 +1,6 @@
 # Obsidian 设置与插件同步设计
 
-日期：2026-10-13。状态：待用户审核；尚未修改功能代码。
+日期：2026-10-13。状态：用户以“开始”批准实施。
 
 ## 目标与授权边界
 
@@ -30,7 +30,7 @@
 
 保留 /v1 的笔记端点语义，只返回 notes。增加 /v1/configuration 下的 snapshot、changes、operations、operation result、history；对象/chunks 端点仍共用。路由决定范围，调用者不能用普通笔记操作修改配置范围。指纹包含配置范围，而旧笔记请求的指纹保持逐字节兼容。
 
-info 仍 protocol 2，增加 configuration_sync 能力标志。旧 0.2.1 插件只收到笔记，不会导入配置；新插件连接没有能力标志的服务时，普通同步继续可用，配置功能明确不可用。两个范围使用全库单调 cursor，各自分页过滤；无匹配变更时确认到请求固定的 until，不能丢掉另一个范围的变更。
+info 仍 protocol 2，增加 configuration_sync 与 configuration_groups 能力标志。旧 0.2.1 插件只收到笔记，不会导入配置；新插件连接没有能力标志的服务时，普通同步继续可用，配置功能明确不可用。两个范围使用全库单调 cursor，各自分页过滤；无匹配变更时确认到请求固定的 until，不能丢掉另一个范围的变更。
 
 配置远端路径相对于配置目录，例如 app.json、plugins/calendar/main.js。路径必须通过既有跨平台校验和配置允许列表。NAS 可读投影将配置存入单独的 configuration/ 树，避免映射到笔记目录；备份仍包含所有数据库记录与 objects，重启分别验证与重建投影。
 
@@ -69,3 +69,7 @@ Apply selected 再读取本地内容并验证预览时的摘要；发生变化�
 - 当前插件依赖中 Obsidian DataAdapter 的 readBinary/writeBinary/process/list/rename 接口。
 
 UX 技能针对 confirmation preview settings import 查询返回明确确认导入动作与简短成功反馈；使用现有 Obsidian Setting/Modal，保留键盘操作与可见错误，不引入新的视觉系统。
+
+## 实施补充：包完整性
+
+每次发布代码/主题包包含完整成员描述符（group ID + members），包括未变化文件。接收端等所有远端成员一致后才允许应用。插件 data.json 独立发布以允许只同步设置，但本机同时收到代码/设置更新时仍以插件为一组应用。全部待上传候选一次性持久化，断电不会仅记录半个包。服务端仍按文件提交；竞争造成部分包时不自动应用，需要来源端续传或显式重新发布解决。本机缺失可选包文件保留远端内容，插件卸载暂不自动传播。

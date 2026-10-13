@@ -1,18 +1,25 @@
-import {App, Modal, Notice, Platform, Plugin, PluginSettingTab, requestUrl, Setting, TAbstractFile, TFolder} from 'obsidian';
+import {App, Modal, Notice, Platform, Plugin, PluginSettingTab, requestUrl, requireApiVersion, Setting, TAbstractFile, TFolder} from 'obsidian';
 import {Api} from './api';
 import {ConnectionContext} from './connection';
 import {PlanItem, SyncEngine} from './engine';
 import {ObsidianLocal} from './local';
 import {FileRecord, included, SyncError} from './types';
-interface Settings { server: string; token: string; deviceName: string; paused: boolean }
+import {ConfigurationLocal} from './configuration-local';
+import {ConfigurationSync} from './configuration-sync';
+import {ConfigurationSelection, defaultConfigurationSelection} from './configuration-paths';
+import {showConfigurationSettings,showConfigurationUpdates} from './configuration-ui';
+interface Settings { server: string; token: string; deviceName: string; paused: boolean; configuration: ConfigurationSelection }
 export default class MindSync extends Plugin {
-  settings: Settings = {server:'',token:'',deviceName:Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'Mac' : 'PC',paused:false};
+  settings: Settings = {server:'',token:'',deviceName:Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'Mac' : 'PC',paused:false,configuration:defaultConfigurationSelection()};
   private connection=new ConnectionContext(()=>this.settings);
   engine?: SyncEngine; local?: ObsidianLocal; api!: Api;
+  configuration?: ConfigurationSync; configurationStatus='Not configured';
+  private unloading=false; private configurationRetry=0;
   status = 'Not configured'; lastError = ''; private busy = false; private failures = 0; private nextRetry = 0;
   private statusEl!: HTMLElement; private timeout?: number;
   async onload() {
     this.settings = {...this.settings,...await this.loadData()};
+    this.settings.configuration={...defaultConfigurationSelection(),...this.settings.configuration};
     this.statusEl = this.addStatusBarItem(); this.statusEl.setAttribute('role','status'); this.statusEl.setAttribute('aria-live','polite');
     this.statusEl.addEventListener('click',()=>this.showStatus());
     this.addRibbonIcon('refresh-cw','MindSync: Sync now',()=>void this.sync(true));
@@ -21,6 +28,7 @@ export default class MindSync extends Plugin {
     this.addCommand({id:'status',name:'View status and conflicts',callback:()=>this.showStatus()});
     this.addCommand({id:'pause',name:'Pause or resume sync',callback:async()=>{this.settings.paused=!this.settings.paused;await this.saveSettings();this.update();}});
     this.addCommand({id:'history',name:'View file history',callback:()=>void this.history()});
+    this.addCommand({id:'configuration',name:'Sync settings and plugins',callback:()=>showConfigurationSettings(this)});
     this.addSettingTab(new NasSettings(this.app,this));
     try {
       this.local = new ObsidianLocal(this.app,`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
@@ -28,6 +36,13 @@ export default class MindSync extends Plugin {
       this.engine = new SyncEngine(state,this.local,this.api,this.settings.deviceName);
       this.engine.onProgress=progress=>{if(progress){this.status=`${progress.direction==='upload'?'Upload':'Download'} ${progress.path}: ${progress.completed}/${progress.total} chunks`;this.update();}};
     } catch(e) { this.report(e); }
+    try {
+      const configDir=this.app.vault.configDir;
+      const local=new ConfigurationLocal(this.app.vault.adapter,configDir,`${configDir}/plugins/${this.manifest.id}/configuration-sync`);
+      await local.load();
+      this.configuration=new ConfigurationSync(local,this.makeApi(undefined,'configuration'),()=>this.settings.configuration,Platform.isMobile,requireApiVersion);
+      this.configurationStatus=local.state.recoveryNotice??(this.settings.configuration.enabled?'Ready':'Disabled');
+    } catch(error) { this.configurationStatus=error instanceof Error?error.message:String(error); }
     const changed = (file: TAbstractFile) => { if (!this.local?.writing && included(file.path,this.app.vault.configDir)) this.schedule(); };
     this.registerEvent(this.app.vault.on('create',changed));
     this.registerEvent(this.app.vault.on('modify',changed));
@@ -39,12 +54,13 @@ export default class MindSync extends Plugin {
       } else { void this.engine?.renamed(old,file.path).catch(e=>this.report(e)); }
       this.schedule();
     }));
-    this.registerDomEvent(document,'visibilitychange',()=>{if(!document.hidden) { if(Number.isFinite(this.nextRetry)) this.nextRetry=0; void this.sync(); }});
+    this.registerDomEvent(document,'visibilitychange',()=>{if(!document.hidden) { if(Number.isFinite(this.nextRetry)) this.nextRetry=0; void this.sync().then(()=>this.syncConfiguration()); }});
     this.registerInterval(window.setInterval(()=>{if(!document.hidden) void this.sync();},5000));
-    this.app.workspace.onLayoutReady(()=>void this.sync()); this.update();
+    this.registerInterval(window.setInterval(()=>{if(!document.hidden)void this.syncConfiguration();},30000));
+    this.app.workspace.onLayoutReady(()=>void this.sync().then(()=>this.syncConfiguration())); this.update();
   }
-  onunload(){if(this.timeout)window.clearTimeout(this.timeout);}
-  private makeApi(token?: string) {
+  onunload(){this.unloading=true;this.configuration?.stop();if(this.timeout)window.clearTimeout(this.timeout);}
+  private makeApi(token?: string, scope: 'notes' | 'configuration' = 'notes') {
     return new Api(this.connection.http(async(connection,method,path,body)=>{
       const url = new URL(connection.server);
       if (!['http:','https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new SyncError('INVALID_URL','Use an HTTP or HTTPS server URL without credentials, query parameters, or fragments');
@@ -53,14 +69,30 @@ export default class MindSync extends Plugin {
       const request=requestUrl({url:base+path,method,headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':body instanceof Uint8Array ? 'application/octet-stream':'application/json'},body:body instanceof Uint8Array ? body.slice().buffer : body,throw:false});
       const reply=await Promise.race([request,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new SyncError('TIMEOUT','Request timed out. Pending operations will be retained and retried')),path.startsWith('/v1/chunks/') ? 30000 : 120000);})]).finally(()=>{if(timer)clearTimeout(timer);});
       return {status:reply.status,body:reply.arrayBuffer};
-    },token));
+    },token),scope);
   }
-  async saveSettings(){await this.saveData(this.settings);this.nextRetry=0;}
+  async saveSettings(){await this.saveData(this.settings);this.nextRetry=0;this.configurationRetry=0;}
+  configurationSelection(){return this.settings.configuration;}
+  async saveConfigurationSelection(selection:ConfigurationSelection){this.settings.configuration=selection;await this.saveSettings();this.configurationStatus=selection.enabled?'Ready':'Disabled';}
+  async runConfiguration<T>(work:()=>Promise<T>,manual=true):Promise<T|undefined>{
+    if(this.busy||this.unloading){this.configurationStatus='Another sync is in progress. Try again shortly';if(manual)new Notice(this.configurationStatus);return;}
+    if(!this.settings.server||!this.settings.token){this.configurationStatus='Configure the server and register this device first';if(manual)new Notice(this.configurationStatus);return;}
+    this.busy=true;this.configurationStatus='Syncing configuration…';
+    try{
+      const result=await this.connection.run(work);
+      this.configurationRetry=0;this.configurationStatus=`${this.configuration?.updates().length??0} configuration updates awaiting review${this.configuration?.local.state.incompleteGroups?.length?'; waiting for complete package uploads':''}`;return result;
+    }catch(error){this.configurationStatus=error instanceof Error?error.message:String(error);this.configurationRetry=Date.now()+60000;if(manual)new Notice(this.configurationStatus,8000);}
+    finally{this.busy=false;this.update();}
+  }
+  private async syncConfiguration(manual=false){
+    if(!this.configuration||!this.settings.configuration.enabled||this.unloading||(!manual&&(this.settings.paused||Date.now()<this.configurationRetry)))return;
+    await this.runConfiguration(()=>this.configuration!.synchronize(),manual);
+  }
   private schedule(){if(this.timeout)window.clearTimeout(this.timeout);this.timeout=window.setTimeout(()=>void this.sync(),1000);}
-  private update(){this.statusEl?.setText(`NAS: ${this.settings.paused?'Paused':this.status}`);}
+  private update(){const pending=this.configuration?.updates().length??0;this.statusEl?.setText(`NAS: ${this.settings.paused?'Paused':this.status}${pending?`; ${pending} configuration updates`:''}`);}
   private report(error: unknown){this.lastError=error instanceof Error ? error.message:String(error);this.status=this.lastError;this.update();}
   async sync(manual=false,allowMerge=false) {
-    if(!this.engine || this.busy || !this.settings.server || !this.settings.token || (!manual && (this.settings.paused || Date.now()<this.nextRetry)))return;
+    if(this.unloading || !this.engine || this.busy || !this.settings.server || !this.settings.token || (!manual && (this.settings.paused || Date.now()<this.nextRetry)))return;
     this.busy=true;this.status='Syncing…';this.update();
     let previewRequired=false;
     try {await this.connection.run(()=>this.engine!.sync(allowMerge));this.status='Synced';this.lastError='';this.failures=0;this.nextRetry=0;if(manual)new Notice('NAS sync completed');}
@@ -69,6 +101,7 @@ export default class MindSync extends Plugin {
       else if(manual)new Notice(this.lastError,8000);
     }finally{this.busy=false;this.update();}
     if(previewRequired)await this.preview();
+    else if(manual)await this.syncConfiguration(true);
   }
   async preview(){
     if(!this.engine||this.busy)return;this.busy=true;
@@ -95,6 +128,8 @@ export default class MindSync extends Plugin {
     const close=modal.onClose.bind(modal);modal.onClose=()=>{window.clearInterval(progressTimer);close();};
     const capacity=box.createEl('p',{text:'Loading NAS storage information…'});
     void this.api.info().then(info=>capacity.setText(`Stored content: ${(info.storage_bytes/1048576).toFixed(1)} MiB; File size limit: ${(info.max_file_bytes/1048576).toFixed(1)} MiB. ${info.logical_bytes===undefined?'':`Logical history size: ${(info.logical_bytes/1048576).toFixed(1)} MiB; `}History is retained. Administrators can manually collect unreferenced objects.`)).catch(()=>capacity.setText('NAS storage information is unavailable'));
+    box.createEl('p',{text:`Settings and plugins: ${this.configurationStatus}`});
+    if(this.configuration?.updates().length)new Setting(box).setName('Pending configuration updates').addButton(b=>b.setButtonText('Review updates').onClick(()=>{modal.close();void showConfigurationUpdates(this);}));
     box.createEl('p',{text:'Sync is not guaranteed while Android closes or suspends the app. Deleted files remain in local .trash. Attachment recovery copies are retained in the plugin journal and .trash. The NAS file tree is for viewing and export.'});
     const list=box.createEl('ul',{cls:'mindsync-list'});
     for(const path of this.engine?.state.conflicts??[]){
@@ -149,6 +184,7 @@ class NasSettings extends PluginSettingTab {
     let admin='';new Setting(el).setName('Register this device').setDesc('Enter the admin token from deployment. The device token is saved after registration; the admin token is not saved.').addText(t=>{t.inputEl.type='password';t.setPlaceholder('Admin token').onChange(value=>admin=value.trim());}).addButton(b=>b.setButtonText('Register').onClick(async()=>{b.setDisabled(true);try{await this.plugin.registerDevice(admin);admin='';this.display();}catch(e){new Notice(e instanceof Error?e.message:String(e));}finally{b.setDisabled(false);}}));
     new Setting(el).setName('Connection and sync').addButton(b=>b.setButtonText('Test connection').onClick(()=>void this.plugin.testConnection())).addButton(b=>b.setButtonText('Preview').onClick(()=>void this.plugin.preview())).addButton(b=>b.setButtonText('Sync now').setCta().onClick(()=>void this.plugin.sync(true)));
     new Setting(el).setName('Pause automatic sync').setDesc('Manual sync remains available.').addToggle(t=>t.setValue(this.plugin.settings.paused).onChange(async value=>{this.plugin.settings.paused=value;await this.plugin.saveSettings();}));
-    el.createEl('p',{text:'Sync notes and attachments. Hidden folders, Obsidian settings, and plugins are excluded. Restore file history from the command palette; deleted files can be selected when no synced file is open.'});
+    new Setting(el).setName('Settings and plugins').setDesc('Choose configuration items to publish or receive. Incoming updates wait for review.').addButton(b=>b.setButtonText('Manage').onClick(()=>showConfigurationSettings(this.plugin)));
+    el.createEl('p',{text:'Sync notes and attachments. Settings and plugins can be enabled separately. Workspace files and MindSync credentials stay local. Restore file history from the command palette.'});
   }
 }

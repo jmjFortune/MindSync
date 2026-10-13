@@ -1,8 +1,9 @@
+export interface ConfigurationGroup {id: string; members: string[]}
 export interface Chunk { hash: string; size: number }
-export interface FileRecord { id: string; path: string; revision: number; hash: string; size: number; deleted: boolean; chunked?: boolean; chunks?: Chunk[] }
-export interface Operation { operation_id: string; kind: 'put' | 'rename' | 'delete'; file_id: string; path?: string; base_revision: number; hash?: string; size?: number; chunked?: boolean; chunks?: Chunk[] }
+export interface FileRecord { id: string; path: string; revision: number; hash: string; size: number; deleted: boolean; chunked?: boolean; chunks?: Chunk[]; group?: ConfigurationGroup }
+export interface Operation { operation_id: string; kind: 'put' | 'rename' | 'delete'; file_id: string; path?: string; base_revision: number; hash?: string; size?: number; chunked?: boolean; chunks?: Chunk[]; group?: ConfigurationGroup }
 export interface Result { file: FileRecord; cursor: number }
-export interface Info { protocol: number; vault_id: string; max_file_bytes: number; cursor: number; storage_bytes: number; logical_bytes?: number; chunk_algo?: string; chunk_min?: number; chunk_avg?: number; chunk_max?: number }
+export interface Info { protocol: number; vault_id: string; max_file_bytes: number; cursor: number; storage_bytes: number; logical_bytes?: number; chunk_algo?: string; chunk_min?: number; chunk_avg?: number; chunk_max?: number; configuration_sync?: boolean; configuration_groups?: boolean }
 export interface Snapshot { files: FileRecord[]; cursor: number }
 export interface Changes { changes: FileRecord[]; cursor: number; until: number; has_more: boolean }
 export interface Remote {

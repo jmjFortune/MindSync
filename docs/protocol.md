@@ -50,3 +50,15 @@ GC 不删除任何历史版本，也不回收仍有历史引用的块。它只�
 ## 恢复旧备份
 
 备份仍为 PostgreSQL 导出与 objects 归档。0002 增量迁移不重写旧文件，首次启动验证历史完整性并重建单块/多块投影。恢复保留版本与 cursor，但轮换 vault ID 表示新的历史分支。现有客户端以 VAULT_MISMATCH 停止，须保留原本地库并在新本地库连接。客户端保存远端游标高水位，检测数据库回退并报告 SERVER_ROLLBACK；不能通过清空客户端状态强行接续。
+
+## Configuration scope（0.3.0）
+
+`GET /v1/info` 增加 `configuration_sync:true` 与 `configuration_groups:true`；协议仍为 2。客户端配置功能要求两个能力均存在；笔记功能保持 v1/v2 兼容。
+
+配置记录带 `scope:"configuration"`；旧/笔记记录默认 notes 并省略 scope。配置元数据端点为 `/v1/configuration/snapshot`、`changes`、`operations`、`operations/{id}`、`files/{id}/history`，参数和返回形式与原笔记端点相同。原端点只读写 notes，路由决定 scope；跨范围身份/结果/history 查找返回 404，operation ID 跨范围复用返回 409。notes 请求的既有 fingerprint 保持兼容。两范围共用全库递增 revision/cursor 和对象/块 API；分页按 scope 筛选，空页推进到固定 until。相同 path 在两个范围独立。
+
+允许配置路径相对设备 `configDir`：app.json、appearance.json、hotkeys.json、core-plugins.json、community-plugins.json、snippets/*.css、themes/<name>/{manifest.json,theme.css}、plugins/<id>/{manifest.json,main.js,styles.css,data.json}。严格排除隐藏项目、MindSync、LiveSync、缓存和路径遍历。设备侧还实施所选项目过滤。
+
+配置 put 可带 `group:{id,members:[path,...]}`，记录和历史保留描述符。group 仅用于配置 put，ID 通过既有身份校验，成员 1–4 个且不重复、包括当前 path、属于同一发布组并通过允许列表。插件代码包为 plugins/<id>（data.json 独立发布）；主题包为 themes/<name>；其他文件独立。数据库每个文件仍独立条件提交，客户端仅在组所有当前记录具有一致 group ID/members 时展示为可应用包，部分发布不会触发本机包替换。更改包时同时发布未变化成员；全部不可变候选先一次性保存，再提交。中断后按原 operation ID 续传。竞争导致的部分包保留副本并由显式重新发布解决，不承诺服务端多文件事务。
+
+配置客户端使用独立双槽 checksum 日志，收到更新先校验/暂存，Apply 再核对本地摘要和当前远端 revision/包完整性。插件代码与所选 data.json 在本机按插件组一起准备、校验 manifest ID/平台/minAppVersion 并写入；enabled list 最后应用且过滤不兼容/未安装插件，保留本机私有与未选启用状态。写前持久化原内容/意图，JSON 用 DataAdapter.process 条件替换，其余用临时文件和 rename；失败或重启回滚已知更新，未知并发编辑保留副本。不承诺跨平台文件系统 CAS。备份覆盖两范围所有历史和 objects，NAS projection 分别重建 vault/ 与 configuration/。

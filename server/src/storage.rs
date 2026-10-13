@@ -203,6 +203,7 @@ pub struct Storage {
     pub root: Dir,
     pub objects: Dir,
     pub vault: Dir,
+    pub configuration: Dir,
     pub tmp: Dir,
 }
 pub struct Temporary {
@@ -215,11 +216,19 @@ impl Drop for Temporary {
     }
 }
 impl Storage {
+    pub fn for_scope(&self, scope: crate::configuration::Scope) -> Self {
+        let mut storage = self.clone();
+        if scope == crate::configuration::Scope::Configuration {
+            storage.vault = self.configuration.clone();
+        }
+        storage
+    }
     pub fn new(path: &Path) -> io::Result<Self> {
         let root = Dir::root(path)?;
         Ok(Self {
             objects: root.child("objects", true)?,
             vault: root.child("vault", true)?,
+            configuration: root.child("configuration", true)?,
             tmp: root.child("tmp", true)?,
             root,
         })

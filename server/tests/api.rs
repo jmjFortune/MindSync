@@ -10,6 +10,388 @@ use tower::ServiceExt;
 
 const ADMIN: &str = "integration-test-admin-credential-at-least-32-characters";
 static DATABASE_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[tokio::test]
+async fn configuration_scope_isolated_and_restart_safe() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture().await;
+    let hash = upload(&router, ADMIN, b"{}").await;
+    let (_, info) = request(&router, "GET", "/v1/info", ADMIN, Value::Null).await;
+    assert_eq!(info["configuration_sync"], true);
+    assert_eq!(info["configuration_groups"], true);
+    let note = put("note-op", "note-id", "app.json", 0, &hash, 2);
+    assert_eq!(
+        operation(&router, ADMIN, note.clone()).await.0,
+        StatusCode::OK
+    );
+    let configuration = put("config-op", "config-id", "app.json", 0, &hash, 2);
+    let (status, committed) = request(
+        &router,
+        "POST",
+        "/v1/configuration/operations",
+        ADMIN,
+        configuration.clone(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{committed}");
+    assert_eq!(committed["file"]["scope"], "configuration");
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            configuration
+        )
+        .await
+        .1,
+        committed
+    );
+    assert_eq!(
+        operation(&router, ADMIN, note).await.1["file"]["revision"],
+        1
+    );
+    for (prefix, id) in [("/v1", "note-id"), ("/v1/configuration", "config-id")] {
+        let (_, snapshot) = request(
+            &router,
+            "GET",
+            &format!("{prefix}/snapshot"),
+            ADMIN,
+            Value::Null,
+        )
+        .await;
+        assert_eq!(snapshot["files"].as_array().unwrap().len(), 1);
+        assert_eq!(snapshot["files"][0]["id"], id);
+        let (_, changes) = request(
+            &router,
+            "GET",
+            &format!("{prefix}/changes?after=0"),
+            ADMIN,
+            Value::Null,
+        )
+        .await;
+        assert_eq!(changes["changes"].as_array().unwrap().len(), 1);
+        assert_eq!(changes["changes"][0]["id"], id);
+    }
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/v1/configuration/changes?after=2",
+            ADMIN,
+            Value::Null
+        )
+        .await
+        .1["cursor"],
+        2
+    );
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/v1/files/config-id/history",
+            ADMIN,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/v1/operations/config-op",
+            ADMIN,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/v1/configuration/operations/note-op",
+            ADMIN,
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        operation(
+            &router,
+            ADMIN,
+            put("cross-op", "config-id", "app.json", 2, &hash, 2)
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            put("note-op", "another", "hotkeys.json", 0, &hash, 2)
+        )
+        .await
+        .0,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/app.json")).unwrap(),
+        b"{}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("configuration/app.json")).unwrap(),
+        b"{}"
+    );
+    let rename = json!({"operation_id":"config-rename","kind":"rename","file_id":"config-id","path":"hotkeys.json","base_revision":2});
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            rename
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert!(dir.path().join("vault/app.json").is_file());
+    assert!(!dir.path().join("configuration/app.json").exists());
+    let restart = app(Config {
+        data: dir.path().canonicalize().unwrap(),
+        database_url: std::env::var("TEST_DATABASE_URL").unwrap(),
+        admin_token: ADMIN.into(),
+        max_file_bytes: 1024,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("configuration/hotkeys.json")).unwrap(),
+        b"{}"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/app.json")).unwrap(),
+        b"{}"
+    );
+    let (_, history) = request(
+        &restart,
+        "GET",
+        "/v1/configuration/files/config-id/history",
+        ADMIN,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(history["versions"].as_array().unwrap().len(), 2);
+    let delete = json!({"operation_id":"config-delete","kind":"delete","file_id":"config-id","base_revision":3});
+    assert_eq!(
+        request(
+            &restart,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            delete
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    assert!(!dir.path().join("configuration/hotkeys.json").exists());
+    assert!(dir.path().join("vault/app.json").is_file());
+}
+
+#[tokio::test]
+async fn configuration_scope_rejects_private_and_invalid_paths() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, _dir) = fixture().await;
+    let hash = upload(&router, ADMIN, b"{}").await;
+    for (index, path) in [
+        "workspace.json",
+        "workspace-mobile.json",
+        "plugins/mindsync/data.json",
+        "plugins/obsidian-livesync/data.json",
+        "../app.json",
+        "plugins/calendar/cache.json",
+        "themes/.hidden/theme.css",
+        "plugins/calendar/../main.js",
+    ]
+    .iter()
+    .enumerate()
+    {
+        let (status, body) = request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            put(
+                &format!("blocked-{index}"),
+                &format!("id-{index}"),
+                path,
+                0,
+                &hash,
+                2,
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{path}: {body}");
+    }
+    for (index, path) in [
+        "appearance.json",
+        "snippets/custom.css",
+        "themes/Example/theme.css",
+        "plugins/calendar/main.js",
+        "plugins/calendar/data.json",
+        "community-plugins.json",
+    ]
+    .iter()
+    .enumerate()
+    {
+        assert_eq!(
+            request(
+                &router,
+                "POST",
+                "/v1/configuration/operations",
+                ADMIN,
+                put(
+                    &format!("allowed-{index}"),
+                    &format!("allowed-id-{index}"),
+                    path,
+                    0,
+                    &hash,
+                    2
+                )
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+    }
+    assert_eq!(
+        request(
+            &router,
+            "GET",
+            "/v1/configuration/snapshot",
+            "invalid",
+            Value::Null
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        request(&router, "GET", "/v1/snapshot", ADMIN, Value::Null)
+            .await
+            .1["files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+#[tokio::test]
+async fn configuration_packages_validate_and_preserve_descriptors() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, _dir) = fixture().await;
+    let hash = upload(&router, ADMIN, b"{}").await;
+    let members = ["plugins/example/main.js", "plugins/example/manifest.json"];
+    let descriptor = json!({"id":"package-one","members":members});
+    for (index, path) in members.iter().enumerate() {
+        let mut body = put(
+            &format!("package-op-{index}"),
+            &format!("package-file-{index}"),
+            path,
+            0,
+            &hash,
+            2,
+        );
+        body["group"] = descriptor.clone();
+        let (status, result) = request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            body.clone(),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{result}");
+        assert_eq!(result["file"]["group"], descriptor);
+        assert_eq!(
+            request(&router, "POST", "/v1/configuration/operations", ADMIN, body)
+                .await
+                .1,
+            result
+        );
+    }
+    let (_, snapshot) = request(
+        &router,
+        "GET",
+        "/v1/configuration/snapshot",
+        ADMIN,
+        Value::Null,
+    )
+    .await;
+    for record in snapshot["files"].as_array().unwrap() {
+        assert_eq!(record["group"], descriptor);
+    }
+    for (index, group) in [
+        json!({"id":"bad/identity","members":["app.json"]}),
+        json!({"id":"duplicate","members":["app.json","app.json"]}),
+        json!({"id":"missing","members":["hotkeys.json"]}),
+        json!({"id":"cross-group","members":["app.json","hotkeys.json"]}),
+        json!({"id":"private","members":["app.json","plugins/mindsync/data.json"]}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut body = put(
+            &format!("invalid-package-{index}"),
+            &format!("invalid-file-{index}"),
+            "app.json",
+            0,
+            &hash,
+            2,
+        );
+        body["group"] = group;
+        let (status, result) =
+            request(&router, "POST", "/v1/configuration/operations", ADMIN, body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{result}");
+    }
+    let mut note = put(
+        "note-package-op",
+        "note-package-file",
+        "app.json",
+        0,
+        &hash,
+        2,
+    );
+    note["group"] = json!({"id":"note-package","members":["app.json"]});
+    assert_eq!(
+        operation(&router, ADMIN, note).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+    let deletion = json!({"operation_id":"delete-package","kind":"delete","file_id":"package-file-0","base_revision":1,"group":descriptor});
+    assert_eq!(
+        request(
+            &router,
+            "POST",
+            "/v1/configuration/operations",
+            ADMIN,
+            deletion
+        )
+        .await
+        .0,
+        StatusCode::UNPROCESSABLE_ENTITY
+    );
+}
+
 async fn request(
     router: &Router,
     method: &str,
@@ -1386,11 +1768,11 @@ async fn upgrade_from_v1_schema_preserves_history_and_operation_fingerprints() {
     let (status, result) = operation(&router, ADMIN, body.clone()).await;
     assert_eq!(status, StatusCode::OK, "{result}");
     // Reconstruct an actual v1 schema/record/ledger, including the 0001 migration
-    // bookkeeping, then let normal startup apply only migration 0002.
+    // bookkeeping, then let normal startup apply the additive migrations.
     let pool = sqlx::PgPool::connect(&std::env::var("TEST_DATABASE_URL").unwrap())
         .await
         .unwrap();
-    sqlx::raw_sql("DROP TABLE version_chunks; ALTER TABLE files DROP COLUMN chunked; DELETE FROM _sqlx_migrations WHERE version=2; UPDATE changes SET record=record-'chunked'-'chunks'; UPDATE operations SET result=jsonb_set(result,'{file}',(result->'file')-'chunked'-'chunks')")
+    sqlx::raw_sql("DROP TABLE version_chunks; ALTER TABLE files DROP COLUMN chunked; DROP INDEX files_active_paths; ALTER TABLE files DROP COLUMN scope; CREATE UNIQUE INDEX files_active_paths ON files(path_key) WHERE NOT deleted; DELETE FROM _sqlx_migrations WHERE version>=2; UPDATE changes SET record=record-'chunked'-'chunks'; UPDATE operations SET result=jsonb_set(result,'{file}',(result->'file')-'chunked'-'chunks')")
         .execute(&pool).await.unwrap();
     let restarted = app(Config {
         data: dir.path().canonicalize().unwrap(),

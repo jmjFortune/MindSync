@@ -116,3 +116,44 @@ Real Obsidian lifecycle/foreground behavior on macOS/Windows/Android, mobile req
 Plugin 0.2.1 uses English for settings, commands, notices, sync plans, status/history/conflict dialogs, error messages, and date formatting. CLI output, source/configuration comments, and package descriptions are English. Documentation may remain Chinese; AGENTS.md records the project language rule. Unicode filename tests retain the same values through escapes.
 
 Verification: all 73 plugin tests passed with one worker; TypeScript/esbuild build passed; shell syntax, English CLI usage, Compose configuration and non-document source language audit passed. Both the main Obsidian Vault and the separate test vault contain byte-identical 0.2.1 plugin files, with original credentials, pause settings and journal slots preserved. Their existing device tokens authenticate against protocol 2. Reload the plugin to load the updated UI; actual GUI rendering has not been observed. The unchanged Rust backend remains 0.2.0.
+
+# Configuration sync 0.3.0 — 2026-10-13
+
+## Local evidence
+
+- Plugin single-worker suite: 99 passed (25 configuration scenarios, one additional scoped API route case, all existing regressions). TypeScript/esbuild build passed.
+- Disposable PostgreSQL API suite: 18 passed, covering scope isolation/projection restart/history/rename/delete/auth, forbidden private paths, package descriptor validation, and old notes fingerprint replay across migrations 1–3.
+- Rust debug build, all-targets clippy with warnings denied, rustfmt and diff whitespace checks passed.
+- Actual loopback HTTP/disk acceptance: 8 selected JSON/theme/snippet/plugin files round-tripped into a custom configDir, staged without early target writes, note/configuration app.json paths stayed isolated, private workspace/MindSync files excluded, and stale local previews rejected.
+- A committed reply was discarded, then actual disk journal reloaded: zero repeated PUTs.
+- Real child process received SIGKILL after writing the first JSON of a group. Reloading ConfigurationLocal rolled both files back to their original bytes and cleared the intent. This uses a disk-backed DataAdapter fixture rather than Obsidian itself.
+- Original notes HTTP suite: 9 scenario groups passed after configuration acceptance.
+
+Additional regressions cover local/remote changes after preview, atomic candidate journaling, partial remote package markers, changed-group approval, interrupted uploads, whole-group rollback, concurrent editor preservation, incompatible/invalid plugin manifests, enabled-list filtering, feature disable, corrupted content and journal fallback. Plugin code groups publish with matching descriptors; data.json is independently publishable but grouped with code for local apply. Missing optional local files retain remote files; plugin uninstall propagation is deferred.
+
+## Reproduction
+
+Use a fresh disposable service on loopback and the public fixture admin credential, never a production library:
+
+```sh
+npm exec --prefix plugin -- esbuild scripts/configuration-acceptance.ts --bundle --platform=node --format=esm --outfile=plugin/dist/configuration-acceptance.mjs
+# Set MINDSYNC_TEST_URL and MINDSYNC_ADMIN_TOKEN for the disposable service.
+node plugin/dist/configuration-acceptance.mjs
+```
+
+Results: nas-data/configuration-acceptance.json. Existing integration.mjs may run afterwards. The acceptance script actually kills its child process and cleans its own temporary vaults.
+
+## Device/UI boundary
+
+Computer Use still reports that macOS permissions are not granted. No new settings-selection/preview/apply UI has been visually observed inside Obsidian. Native Obsidian Settings/Modal controls, mobile API signatures, and platform/version checks are present, but actual macOS/Windows/Android configuration loading, restart behavior, keyboard/dark/mobile layout and lifecycle require separate hardware/UI acceptance. No real user configuration was published or imported during fixtures.
+
+## NAS and installation evidence
+
+- Final NAS image built with one Cargo job, host networking and cached dependencies; application release compilation took 2m25s. Image SHA-256: fb20548134f86f702c4eb0ebb498da1fe1adfa5ae445f2a776344d50a3072573.
+- Disposable NAS loopback configuration/disk/SIGKILL acceptance passed with the same 8 selected files, exclusions, scope separation, stale-preview rejection and zero repeated PUTs. Original notes HTTP 9 scenario groups passed afterwards. App CPU limit 0.5, PG 0.25, Node nice priority; no production fixture writes.
+- Fixture startup check initially exited during PostgreSQL's temporary initialization server shutdown. Requiring TCP readiness waited for the final database process; application acceptance then passed.
+- Before production upgrade, backup.sh completed a database/object backup under backups/pre-configuration-20261013. NAS checksums and downloaded local copy backups/pre-configuration-nas-20261013 both passed. Previous production image retained as mindsync:pre-configuration-20261013.
+- Production notes library upgraded to 0.3.0 after isolated acceptance. Same vault identity and cursor 0, storage/logical bytes 0 before/after; configuration_sync/configuration_groups available. Migration versions 1/2/3 successful, uid/gid 1000:1001; notes.env remains mode 600. Empty production backup does not establish nonempty upgrade recovery; the dedicated legacy-history migration tests cover that separately.
+- Main vault /Users/shiyun/Documents/Obsidian Vault and test vault /Users/shiyun/Documents/MindSync 测试 installed plugin 0.3.0. All three installed files match the build, credentials/settings/journals remain byte-identical. Both original device tokens authenticated against upgraded production. Main vault remains paused, test vault keeps its previous unpaused setting, and configuration sync remains disabled by default.
+- Private pre-install plugin backups retained under backups/obsidian-main-plugin-pre-configuration-20261013 and backups/obsidian-test-plugin-pre-configuration-20261013. No real configuration was automatically published/applied. Reloading Obsidian is still required for the running session to load new code.
+- Final ZIP/source contents matched current files; original device credentials excluded, caches/local data/Finder metadata excluded, SHA-256 checksums and English bundle audit passed. Disposable local/NAS services, network and staging were removed; production remains healthy and private backups/previous image remain.

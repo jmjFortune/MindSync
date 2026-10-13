@@ -2,9 +2,11 @@ import {Changes, Info, Operation, Remote, Result, Snapshot, SyncError} from './t
 export interface HttpReply { status: number; body: ArrayBuffer }
 export type Http = (method: string, path: string, body?: string | Uint8Array) => Promise<HttpReply>;
 export class Api implements Remote {
-  constructor(private http: Http) {}
+  constructor(private http: Http, private scope: 'notes' | 'configuration' = 'notes') {}
   private async request<T>(method: string, path: string, body?: unknown, binary = false): Promise<T> {
-    const reply = await this.http(method, path, body instanceof Uint8Array ? body : body === undefined ? undefined : JSON.stringify(body));
+    const scoped = this.scope === 'configuration' && /^\/v1\/(snapshot|changes|operations|files)([/?]|$)/.test(path)
+      ? path.replace('/v1/', '/v1/configuration/') : path;
+    const reply = await this.http(method, scoped, body instanceof Uint8Array ? body : body === undefined ? undefined : JSON.stringify(body));
     if (reply.status < 400 && binary) return new Uint8Array(reply.body) as T;
     const text = new TextDecoder().decode(reply.body);
     if (reply.status >= 400) {

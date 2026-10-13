@@ -6,7 +6,7 @@
 
 支持笔记、附件、版本历史、设备令牌、删除传播、稳定身份的重命名、断线重试和冲突副本。版本冲突保留双方内容；操作 ID 防止重复提交。NAS 保存不可变内容对象，PostgreSQL 保存版本和变更日志，可读 Markdown 文件树由它们重建。
 
-Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不承诺后台同步。默认排除隐藏目录、Obsidian 设置和插件自身数据。单文件默认上限 50 MiB，v2 支持内容分块、跨版本去重和未提交候选的断点续传，本地与 NAS 验证结果见验证记录。暂不支持端到端加密、多人协作、WebDAV 或 RAG。历史对象不自动清理；手动 GC 只回收超过宽限期的无引用对象，保留所有历史版本。可读文件树只供查看和导出，直接修改会在重建时丢弃。
+Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不承诺后台同步。笔记同步默认排除隐藏目录；0.3.0 新增独立的设置和插件同步，按设备启用并按项选择，收到更新后预览应用。MindSync 自身凭据/日志与 workspace 文件保持本机独立。单文件默认上限 50 MiB，v2 支持内容分块、跨版本去重和未提交候选的断点续传，本地与 NAS 验证结果见验证记录。暂不支持端到端加密、多人协作、WebDAV 或 RAG。历史对象不自动清理；手动 GC 只回收超过宽限期的无引用对象，保留所有历史版本。可读文件树只供查看和导出，直接修改会在重建时丢弃。
 
 ## 部署与安装
 
@@ -27,6 +27,14 @@ sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 旧的单库方式（`sh scripts/init-env.sh` + `.env` + `docker compose up -d --build --wait`）仍然可用，详见部署说明。
 
 将安装包内 `mindsync` 文件夹复制到本地库的 `.obsidian/plugins/`，或库自定义配置目录下的 `plugins/`。它包含 `main.js`、`manifest.json` 和 `styles.css`。在 Obsidian 社区插件设置中启用 MindSync。所有设备首次连接先预览同步计划，再确认合并。
+
+## 设置和插件同步（0.3.0）
+
+先重载插件，再打开 MindSync → **Settings and plugins → Manage**。每台设备打开 **Sync settings and plugins**，选择 Obsidian 设置、主题、CSS snippets 和需要同步的插件。每个插件的 data.json 设置独立勾选，默认不选；可能包含账号/API keys。Enabled plugin list 也是独立选项，只启用已安装、所选且兼容的插件，并保留本机 MindSync 和未选择插件的启用状态。
+
+来源设备点击 **Publish this device → Publish selected**；其他设备点击 **Review remote settings → Apply selected**。并发差异可选 **Keep local / Use remote**，原内容保存在本机恢复目录。插件文件整组校验与应用，未完成的远端包需等待来源端续传。应用后重载 Obsidian。配置前台每 30 秒检查，收到更新始终等待确认；暂停自动同步后仍可手动操作。第一次发布/接收前不会自动上传。
+
+取消选择、移除本机插件或缺少可选 CSS 不会自动卸载其他设备的插件。workspace、LiveSync 配置、MindSync 的令牌/状态及缓存不参与同步。功能默认关闭，旧设备只同步笔记。NAS `configuration/` 是单独的可读配置投影，备份仍是数据库和不可变 objects。实际 GUI/移动端验收边界见[验证记录](docs/verification.md)。
 
 ## 开发
 

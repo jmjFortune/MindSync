@@ -1,10 +1,12 @@
 mod chunks;
+mod configuration;
+use configuration::Scope;
 mod path;
 mod storage;
 use axum::{
     Extension, Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Path, Query, Request, State},
+    extract::{DefaultBodyLimit, OriginalUri, Path, Query, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -140,6 +142,10 @@ pub struct FileRecord {
     pub chunked: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub chunks: Vec<chunks::Chunk>,
+    #[serde(default, skip_serializing_if = "Scope::is_notes")]
+    pub scope: Scope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<configuration::Group>,
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -185,6 +191,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         chunks::verify_file(&storage, &file)?;
     }
     storage.vault.clear()?;
+    storage.configuration.clear()?;
     storage.tmp.clear()?;
     let files = sqlx::query_scalar::<_, Value>(
         "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision WHERE NOT f.deleted ORDER BY f.path"
@@ -218,6 +225,11 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         .route("/v1/operations", post(operation))
         .route("/v1/operations/{id}", get(operation_result))
         .route("/v1/files/{id}/history", get(history))
+        .route("/v1/configuration/snapshot", get(snapshot))
+        .route("/v1/configuration/changes", get(changes))
+        .route("/v1/configuration/operations", post(operation))
+        .route("/v1/configuration/operations/{id}", get(operation_result))
+        .route("/v1/configuration/files/{id}/history", get(history))
         .layer(middleware::from_fn_with_state(state.clone(), authenticate));
     Ok(Router::new()
         .route("/health", get(health))
@@ -302,7 +314,7 @@ async fn info(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
         .fetch_one(&state.pool)
         .await?;
     Ok(Json(
-        json!({"protocol":2,"chunk_algo":"fastcdc","chunk_min":chunks::MIN,"chunk_avg":chunks::AVG,"chunk_max":chunks::MAX,"logical_bytes":sqlx::query_scalar::<_,i64>("SELECT COALESCE(SUM((record->>'size')::bigint),0)::bigint FROM changes").fetch_one(&state.pool).await?,"vault_id":row.get::<String,_>("id"),"cursor":row.get::<i64,_>("cursor"),"max_file_bytes":state.max_file_bytes,"storage_bytes":state.storage.usage()?}),
+        json!({"protocol":2,"configuration_sync":true,"configuration_groups":true,"chunk_algo":"fastcdc","chunk_min":chunks::MIN,"chunk_avg":chunks::AVG,"chunk_max":chunks::MAX,"logical_bytes":sqlx::query_scalar::<_,i64>("SELECT COALESCE(SUM((record->>'size')::bigint),0)::bigint FROM changes").fetch_one(&state.pool).await?,"vault_id":row.get::<String,_>("id"),"cursor":row.get::<i64,_>("cursor"),"max_file_bytes":state.max_file_bytes,"storage_bytes":state.storage.usage()?}),
     ))
 }
 #[derive(Deserialize)]
@@ -363,7 +375,11 @@ async fn revoke_device(
     }
     Ok(Json(json!({"id":id,"revoked":true})))
 }
-async fn snapshot(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
+async fn snapshot(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+) -> Result<Json<Value>, ApiError> {
+    let scope = Scope::from_uri(&uri);
     let mut tx = state.pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -372,8 +388,9 @@ async fn snapshot(State(state): State<AppState>) -> Result<Json<Value>, ApiError
         .fetch_one(&mut *tx)
         .await?;
     let files = sqlx::query_scalar::<_, Value>(
-        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision ORDER BY f.id",
+        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision WHERE f.scope=$1 ORDER BY f.id",
     )
+    .bind(scope.as_str())
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -389,8 +406,10 @@ struct ChangesQuery {
 }
 async fn changes(
     State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
     query: Result<Query<ChangesQuery>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    let scope = Scope::from_uri(&uri);
     let Query(q) = query.map_err(|_| ApiError::invalid())?;
     let latest = sqlx::query_scalar::<_, i64>("SELECT cursor FROM vault")
         .fetch_one(&state.pool)
@@ -401,11 +420,12 @@ async fn changes(
         return Err(ApiError::invalid());
     }
     let rows = sqlx::query_scalar::<_, Value>(
-        "SELECT record FROM changes WHERE revision>$1 AND revision<=$2 ORDER BY revision LIMIT $3",
+        "SELECT c.record FROM changes c JOIN files f ON f.id=c.file_id WHERE c.revision>$1 AND c.revision<=$2 AND f.scope=$4 ORDER BY c.revision LIMIT $3",
     )
     .bind(q.after)
     .bind(until)
     .bind(limit + 1)
+    .bind(scope.as_str())
     .fetch_all(&state.pool)
     .await?;
     let has_more = rows.len() > limit as usize;
@@ -517,12 +537,16 @@ struct Operation {
     chunks: Option<Vec<chunks::Chunk>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     chunked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    group: Option<configuration::Group>,
 }
 async fn operation(
     State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
     Extension(identity): Extension<Identity>,
     body: Result<Json<Operation>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>, ApiError> {
+    let scope = Scope::from_uri(&uri);
     let Json(mut op) = body.map_err(|_| ApiError::invalid())?;
     if !valid_id(&op.operation_id)
         || !valid_id(&op.file_id)
@@ -534,6 +558,9 @@ async fn operation(
     let mut path_key = None;
     if let Some(path) = &op.path {
         let (path, key) = path::normalize(path)?;
+        if scope == Scope::Configuration && !configuration::allowed(&path) {
+            return Err(ApiError::invalid());
+        }
         op.path = Some(path);
         path_key = Some(key)
     }
@@ -559,8 +586,21 @@ async fn operation(
         _ => unreachable!(),
     }
     chunks::validate_operation(&op)?;
-    let fingerprint =
-        digest(&serde_json::to_vec(&(identity.id.clone(), &op)).map_err(|_| ApiError::invalid())?);
+    if let Some(group) = &op.group {
+        if scope != Scope::Configuration
+            || op.kind != "put"
+            || !configuration::allowed_group(op.path.as_deref().unwrap_or(""), group)
+        {
+            return Err(ApiError::invalid());
+        }
+    }
+    let fingerprint_bytes = if scope == Scope::Notes {
+        serde_json::to_vec(&(identity.id.clone(), &op))
+    } else {
+        serde_json::to_vec(&(identity.id.clone(), scope, &op))
+    }
+    .map_err(|_| ApiError::invalid())?;
+    let fingerprint = digest(&fingerprint_bytes);
     let _writer = state.writer.lock().await;
     let mut tx = state.pool.begin().await?;
     let cursor =
@@ -609,6 +649,9 @@ async fn operation(
     .map(serde_json::from_value::<FileRecord>)
     .transpose()
     .map_err(|_| ApiError::storage())?;
+    if current.as_ref().is_some_and(|c| c.scope != scope) {
+        return Err(ApiError::missing());
+    }
     if current.as_ref().map(|c| c.revision).unwrap_or(0) != op.base_revision
         || (current.is_none() && op.kind != "put")
         || (current.as_ref().is_some_and(|c| c.deleted) && op.kind != "put")
@@ -633,15 +676,22 @@ async fn operation(
             deleted: false,
             chunked: false,
             chunks: Vec::new(),
+            scope,
+            group: None,
         }
     };
+    file.group = op.group.clone();
+    let projection = state.storage.for_scope(scope);
     if op.kind != "delete" {
         let target = op.path.as_ref().unwrap();
         let key = path_key.as_ref().unwrap();
-        let rows = sqlx::query("SELECT path,path_key FROM files WHERE NOT deleted AND id<>$1")
-            .bind(&op.file_id)
-            .fetch_all(&mut *tx)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT path,path_key FROM files WHERE NOT deleted AND id<>$1 AND scope=$2",
+        )
+        .bind(&op.file_id)
+        .bind(scope.as_str())
+        .fetch_all(&mut *tx)
+        .await?;
         for row in rows {
             let other: String = row.get("path");
             let other_key: String = row.get("path_key");
@@ -706,7 +756,7 @@ async fn operation(
         // it until metadata commits, then replace it with a directory below.
         let old_key = path::normalize(&file.path)?.1;
         if !key.starts_with(&format!("{old_key}/")) {
-            state.storage.vault.parent(target, true)?;
+            projection.vault.parent(target, true)?;
         }
         file.path = target.clone();
         file.deleted = false;
@@ -715,7 +765,7 @@ async fn operation(
     }
     file.revision = cursor.checked_add(1).ok_or_else(ApiError::storage)?;
     let key = path::normalize(&file.path)?.1;
-    sqlx::query("INSERT INTO files(id,path,path_key,revision,hash,size,deleted,chunked) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,path_key=EXCLUDED.path_key,revision=EXCLUDED.revision,hash=EXCLUDED.hash,size=EXCLUDED.size,deleted=EXCLUDED.deleted,chunked=EXCLUDED.chunked").bind(&file.id).bind(&file.path).bind(key).bind(file.revision).bind(&file.hash).bind(file.size).bind(file.deleted).bind(file.chunked).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO files(id,path,path_key,revision,hash,size,deleted,chunked,scope) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,path_key=EXCLUDED.path_key,revision=EXCLUDED.revision,hash=EXCLUDED.hash,size=EXCLUDED.size,deleted=EXCLUDED.deleted,chunked=EXCLUDED.chunked").bind(&file.id).bind(&file.path).bind(key).bind(file.revision).bind(&file.hash).bind(file.size).bind(file.deleted).bind(file.chunked).bind(scope.as_str()).execute(&mut *tx).await?;
     let record = serde_json::to_value(&file).map_err(|_| ApiError::storage())?;
     let result = json!({"file":record,"cursor":file.revision});
     sqlx::query("INSERT INTO changes(revision,file_id,record) VALUES($1,$2,$3)")
@@ -746,9 +796,9 @@ async fn operation(
             let old_key = path::normalize(&old.path)?.1;
             let new_key = path::normalize(&file.path)?.1;
             if !file.deleted && new_key.starts_with(&format!("{old_key}/")) {
-                state.storage.remove_ancestor_projection(&old.path)?;
+                projection.remove_ancestor_projection(&old.path)?;
             } else {
-                state.storage.remove_projection(&old.path)?;
+                projection.remove_projection(&old.path)?;
             }
         }
     }
@@ -768,9 +818,12 @@ async fn repair_file(state: &AppState, id: &str) -> Result<(), ApiError> {
     .transpose()
     .map_err(|_| ApiError::storage())?;
     if let Some(file) = file {
-        let active_paths = sqlx::query("SELECT id,path_key FROM files WHERE NOT deleted")
-            .fetch_all(&state.pool)
-            .await?;
+        let projection = state.storage.for_scope(file.scope);
+        let active_paths =
+            sqlx::query("SELECT id,path_key FROM files WHERE NOT deleted AND scope=$1")
+                .bind(file.scope.as_str())
+                .fetch_all(&state.pool)
+                .await?;
         let historical_paths = sqlx::query_scalar::<_, String>(
             "SELECT DISTINCT record->>'path' FROM changes WHERE file_id=$1",
         )
@@ -800,9 +853,9 @@ async fn repair_file(state: &AppState, id: &str) -> Result<(), ApiError> {
                     owner == id && active_key.starts_with(&format!("{key}/"))
                 });
                 if contains_current {
-                    state.storage.remove_ancestor_projection(&historical)?;
+                    projection.remove_ancestor_projection(&historical)?;
                 } else {
-                    state.storage.remove_projection(&historical)?;
+                    projection.remove_projection(&historical)?;
                 }
             }
         }
@@ -814,6 +867,7 @@ async fn repair_file(state: &AppState, id: &str) -> Result<(), ApiError> {
 }
 async fn operation_result(
     State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
     Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
@@ -827,6 +881,11 @@ async fn operation_result(
         return Err(ApiError::reused());
     }
     let result: Value = row.get("result");
+    let file: FileRecord =
+        serde_json::from_value(result["file"].clone()).map_err(|_| ApiError::storage())?;
+    if file.scope != Scope::from_uri(&uri) {
+        return Err(ApiError::missing());
+    }
     let file_id = result["file"]["id"]
         .as_str()
         .ok_or_else(ApiError::storage)?;
@@ -835,12 +894,14 @@ async fn operation_result(
 }
 async fn history(
     State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let versions = sqlx::query_scalar::<_, Value>(
-        "SELECT record FROM changes WHERE file_id=$1 ORDER BY revision",
+        "SELECT c.record FROM changes c JOIN files f ON f.id=c.file_id WHERE c.file_id=$1 AND f.scope=$2 ORDER BY c.revision",
     )
     .bind(id)
+    .bind(Scope::from_uri(&uri).as_str())
     .fetch_all(&state.pool)
     .await?;
     if versions.is_empty() {
