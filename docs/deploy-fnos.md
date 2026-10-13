@@ -63,8 +63,8 @@ docker compose up -d --build --wait
 在社区插件设置中启用 MindSync，打开插件设置：
 
 1. 填写该库的地址，例如笔记库的 `http://NAS局域网IP:8080`，为设备起不同名称，例如 `Mac`、`Windows`、`Android-phone`、`Android-tablet`。
-2. 在“注册此设备”输入该库 `libraries/<库名>.env` 中的 `MINDSYNC_ADMIN_TOKEN`，点击注册。管理令牌不保存在插件配置中。
-3. 点击测试连接，再预览同步计划。两端都有内容时确认首次合并，冲突副本会保留本地内容。
+2. 在 Register this device 中输入该库 `libraries/<库名>.env` 中的 `MINDSYNC_ADMIN_TOKEN`，点击 Register。管理令牌不保存在插件配置中。
+3. 点击 Test connection，再点击 Preview 预览同步计划。两端都有内容时确认首次合并，冲突副本会保留本地内容。
 4. 在其余设备重复注册，使用各自独立的设备令牌。
 
 插件在编辑停止约 1 秒后上传，在前台每 5 秒检查远端。命令面板提供立即同步、预览、状态、暂停和历史恢复。Android 返回前台时触发同步；关闭或挂起应用后没有独立后台服务。隐藏文件、`.obsidian`、插件配置不参与同步；设备令牌仅在本地配置中。

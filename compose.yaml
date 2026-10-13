@@ -4,12 +4,12 @@ services:
     build: .
     image: mindsync
     restart: unless-stopped
-    # 容器名可覆盖。默认 mindsync / postgres；多个库并存时由 add-library.sh 自动加后缀
-    # （容器名在宿主机上必须唯一）。
+    # Container names default to mindsync / postgres; add-library.sh adds suffixes for later libraries.
+    # Container names must be unique on the host.
     container_name: ${MINDSYNC_CONTAINER_NAME:-mindsync}
-    # 以数据目录的属主身份运行。命名卷默认 10001（镜像内置用户）；
-    # bind mount 时由 add-library.sh 写入该目录的属主 uid/gid。
-    # 飞牛等存储层只放行已知用户，直接用 10001 会因 ACL 而写入失败。
+    # Run as the data directory owner; named volumes default to the image UID 10001.
+    # For bind mounts, add-library.sh sets the owner UID/GID.
+    # fnOS storage ACLs may reject writes by unknown users such as UID 10001.
     user: "${MINDSYNC_RUN_UID:-10001}:${MINDSYNC_RUN_GID:-10001}"
     environment:
       MINDSYNC_ADMIN_TOKEN: ${MINDSYNC_ADMIN_TOKEN:?Set a strong admin token of at least 32 characters}
@@ -21,16 +21,16 @@ services:
     ports:
       - "${MINDSYNC_BIND_ADDRESS:-127.0.0.1}:${MINDSYNC_PORT:-8080}:8080"
     volumes:
-      # 未设置 MINDSYNC_DATA_DIR 时使用项目命名卷（原有行为）；
-      # 设为绝对路径时成为 bind mount，从而让 /data/vault 可读文件树可直接在
-      # NAS 文件管理器中浏览。每个库必须使用各自独立的数据目录。
+      # Without MINDSYNC_DATA_DIR, use the project named volume.
+      # An absolute path creates a bind mount so the readable /data/vault tree is visible
+      # in the NAS file manager. Each library needs a separate data directory.
       - ${MINDSYNC_DATA_DIR:-sync_data}:/data
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      # 覆盖镜像默认值：首次启动需要数据库迁移与可读文件树重建，
-      # 在 NAS 慢盘上容易超过默认 30s 起算期而被误判为 unhealthy。
+      # Override image defaults: initial startup runs migrations and rebuilds the file tree.
+      # Slow NAS disks may exceed the default 30-second start period.
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health || exit 1"]
       interval: 30s
       timeout: 5s

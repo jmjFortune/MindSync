@@ -14,7 +14,7 @@ const gear = (() => {
 })();
 export function validateParameters(p: ChunkParameters) {
   if (![p.min,p.avg,p.max].every(Number.isSafeInteger) || p.min < 64 || p.min > p.avg || p.avg > p.max || p.max > defaults.max || (p.avg & (p.avg-1)) !== 0)
-    throw new SyncError('PROTOCOL_MISMATCH','服务器分块参数不兼容');
+    throw new SyncError('PROTOCOL_MISMATCH','Incompatible server chunk parameters');
 }
 // FastCDC: skip cuts below min, use a stricter mask before avg, a looser
 // mask after avg, and force a cut at max. No Node APIs, including on mobile.

@@ -8,7 +8,7 @@ export class ConnectionContext {
   constructor(private settings: () => Connection) {}
   get current(): Connection { const value=this.active ?? this.settings(); return {server:value.server,token:value.token}; }
   async run<T>(action: () => Promise<T>): Promise<T> {
-    if (this.active) throw new SyncError('SYNC_BUSY','正在同步，请稍后重试');
+    if (this.active) throw new SyncError('SYNC_BUSY','Sync is in progress. Try again later');
     this.active=Object.freeze(this.current);
     try { return await action(); } finally { this.active=undefined; }
   }

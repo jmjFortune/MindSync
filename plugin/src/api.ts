@@ -10,9 +10,9 @@ export class Api implements Remote {
     if (reply.status >= 400) {
       let error: {code?:string;message?:string;current?:Result['file']|null} = {};
       try { error = JSON.parse(text).error ?? {}; } catch { /* reverse proxies may return HTML */ }
-      throw new SyncError(error.code ?? `HTTP_${reply.status}`, error.message ?? `服务器返回 ${reply.status}，请检查连接与配置`, error.current);
+      throw new SyncError(error.code ?? `HTTP_${reply.status}`, error.message ?? `Server returned ${reply.status}. Check the connection and settings`, error.current);
     }
-    try { return JSON.parse(text) as T; } catch { throw new SyncError('INVALID_RESPONSE','服务器返回了无效数据'); }
+    try { return JSON.parse(text) as T; } catch { throw new SyncError('INVALID_RESPONSE','The server returned invalid data'); }
   }
   info() { return this.request<Info>('GET','/v1/info'); }
   snapshot() { return this.request<Snapshot>('GET','/v1/snapshot'); }

@@ -110,3 +110,9 @@ Production notes was healthy with cursor 0 before upgrade. Upgrade-before backup
 ## Remaining hardware checks and limits
 
 Real Obsidian lifecycle/foreground behavior on macOS/Windows/Android, mobile requestUrl and storage memory under real attachments still require hardware acceptance. Manual GC never deletes retained history; it only reclaims unreferenced objects after the grace period. The plugin retains complete-file Vault reads, Web Crypto hashes, base64 journal candidates and complete-file replacement, so the default 50 MiB limit remains. Whole-file streaming and read caching belong to optional phase 4.
+
+# English plugin release — 2026-10-13
+
+Plugin 0.2.1 uses English for settings, commands, notices, sync plans, status/history/conflict dialogs, error messages, and date formatting. CLI output, source/configuration comments, and package descriptions are English. Documentation may remain Chinese; AGENTS.md records the project language rule. Unicode filename tests retain the same values through escapes.
+
+Verification: all 73 plugin tests passed with one worker; TypeScript/esbuild build passed; shell syntax, English CLI usage, Compose configuration and non-document source language audit passed. Both the main Obsidian Vault and the separate test vault contain byte-identical 0.2.1 plugin files, with original credentials, pause settings and journal slots preserved. Their existing device tokens authenticate against protocol 2. Reload the plugin to load the updated UI; actual GUI rendering has not been observed. The unchanged Rust backend remains 0.2.0.

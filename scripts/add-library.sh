@@ -1,16 +1,16 @@
 #!/bin/sh
-# 新增一个 MindSync 库。
+# Create a MindSync library.
 #
-#   一个库 = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌
+#   One library = one server instance + one data directory + one admin token
 #
-# 用法:
-#   sh scripts/add-library.sh <库名> <端口> <数据目录>
-# 例:
+# Usage:
+#   sh scripts/add-library.sh <name> <port> <data-dir>
+# Examples:
 #   sh scripts/add-library.sh notes  8080 /vol1/1000/libraries/notes
 #   sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 #
-# 脚本会提示输入该库的管理令牌与 PostgreSQL 密码：只在你自己的终端里输入，
-# 不回显、不打印、不写入日志、不随机生成。凭据只落在 libraries/<库名>.env（权限 600）。
+# Enter the library admin token and PostgreSQL password in your own terminal.
+# Secrets are not echoed, logged, or generated; they are stored in libraries/<name>.env (mode 600).
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -24,14 +24,14 @@ fi
 
 usage() {
     cat >&2 <<'TXT'
-用法: sh scripts/add-library.sh <库名> <端口> <数据目录> [--no-start]
+Usage: sh scripts/add-library.sh <name> <port> <data-dir> [--no-start]
 
-  库名      小写字母、数字和短横线，例如 notes / zotero
-  端口      该库在宿主机发布的端口，各库不得重复，例如 8080 / 8081
-  数据目录  该库的独立数据目录（绝对路径）。其下 vault/ 是可读文件树。
-  --no-start  只准备数据目录与凭据文件，不启动。用于先建空库再恢复备份。
+  name        Lowercase letters, digits, and hyphens; e.g. notes / zotero
+  port        Unique host port for this library; e.g. 8080 / 8081
+  data-dir    Absolute path to a dedicated data directory; vault/ is the readable file tree.
+  --no-start  Prepare directories and credentials without starting, for backup restoration.
 
-例:
+Examples:
   sh scripts/add-library.sh notes  8080 /vol1/1000/libraries/notes
   sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 TXT
@@ -41,33 +41,33 @@ TXT
 [ -n "$NAME" ] && [ -n "$PORT" ] && [ -n "$DIR" ] || usage
 
 case "$NAME" in
-    *[!a-z0-9-]*|""|-) echo "错误: 库名只能包含小写字母、数字和短横线" >&2; exit 1 ;;
+    *[!a-z0-9-]*|""|-) echo "Error: library names may contain only lowercase letters, digits, and hyphens" >&2; exit 1 ;;
 esac
 case "$PORT" in
-    *[!0-9]*|"") echo "错误: 端口必须是数字" >&2; exit 1 ;;
+    *[!0-9]*|"") echo "Error: the port must be numeric" >&2; exit 1 ;;
 esac
 if [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
-    echo "错误: 端口必须在 1-65535 之间" >&2
+    echo "Error: the port must be between 1 and 65535" >&2
     exit 1
 fi
 case "$DIR" in
     /*) ;;
-    *) echo "错误: 数据目录必须是绝对路径" >&2; exit 1 ;;
+    *) echo "Error: the data directory must be an absolute path" >&2; exit 1 ;;
 esac
 
 ENV_FILE="libraries/$NAME.env"
 if [ -e "$ENV_FILE" ]; then
-    echo "错误: $ENV_FILE 已存在。要重建请先确认并删除它，或换一个库名。" >&2
+    echo "Error: $ENV_FILE already exists. Review and remove it before recreating, or choose another library name." >&2
     exit 1
 fi
 
-# 库的 compose 项目名与容器名。
-# 第一个库用干净名字（项目 mindsync、容器 mindsync 与 postgres）；
-# 之后新增的库必须加后缀，因为容器名在宿主机上必须唯一。
+# Library Compose project and container names.
+# The first library uses project mindsync and containers mindsync / postgres.
+# Later libraries use suffixes because container names must be unique on the host.
 if [ -n "${MINDSYNC_PROJECT:-}" ]; then
     PROJECT=$MINDSYNC_PROJECT
 else
-    # 已有其它库（排除模板 example.env）时使用带后缀的名字
+    # Use a suffix when another library exists, excluding example.env.
     others=$(ls libraries/*.env 2>/dev/null | grep -v '/example\.env$' || true)
     if [ -z "$others" ]; then
         PROJECT="mindsync"
@@ -83,51 +83,51 @@ else
     PG_CONTAINER="postgres-${PROJECT#mindsync-}"
 fi
 
-# 该库若曾部署过，数据库卷里存着旧口令；此处必须拦住，避免启动后一直认证失败。
+# Refuse an existing database volume: its saved password may differ from the new credentials.
 if docker volume inspect "${PROJECT}_postgres_data" >/dev/null 2>&1; then
-    echo "错误: 已存在数据卷 ${PROJECT}_postgres_data，说明库 '$NAME' 曾部署过。" >&2
-    echo "      要重新部署，请先删除该项目（会清空该库的数据库内容）：" >&2
+    echo "Error: volume ${PROJECT}_postgres_data already exists; library '$NAME' was previously deployed." >&2
+    echo "      To redeploy, first remove the project (this deletes the library database):" >&2
     echo "        docker compose -p $PROJECT down -v" >&2
     exit 1
 fi
 
-# 端口占用检查（各库端口不得重复）
+# Check for occupied ports; each library needs a unique port.
 if command -v ss >/dev/null 2>&1; then
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]$PORT\$/"; then
-        echo "错误: 端口 $PORT 已被占用，请换一个端口" >&2
+        echo "Error: port $PORT is in use; choose another port" >&2
         exit 1
     fi
 elif command -v netstat >/dev/null 2>&1; then
     if netstat -an 2>/dev/null | grep -qE "[.:]$PORT[[:space:]]+.*LISTEN"; then
-        echo "错误: 端口 $PORT 已被占用，请换一个端口" >&2
+        echo "Error: port $PORT is in use; choose another port" >&2
         exit 1
     fi
 else
-    echo "提示: 未找到 ss/netstat，跳过端口占用检查。" >&2
+    echo "Note: ss/netstat was not found; skipping the port availability check." >&2
 fi
 
-# 数据目录检查：只允许空目录，或本工具先前为该库创建的目录
+# Allow only an empty directory or one previously created for this library.
 MARKER="$DIR/.mindsync-library"
 if [ -e "$MARKER" ]; then
     OWNER=$(cat "$MARKER")
     if [ "$OWNER" != "$NAME" ]; then
-        echo "错误: $DIR 已属于库 '$OWNER'，不能给 '$NAME' 使用" >&2
+        echo "Error: $DIR belongs to library '$OWNER' and cannot be used for '$NAME'" >&2
         exit 1
     fi
 fi
 if [ ! -e "$MARKER" ] && [ -d "$DIR" ] && [ -n "$(ls -A "$DIR" 2>/dev/null)" ]; then
-    echo "错误: $DIR 已存在且非空，且不是本工具创建的库目录" >&2
+    echo "Error: $DIR is not empty and was not created by this tool" >&2
     exit 1
 fi
 
 BIND=${MINDSYNC_BIND_ADDRESS:-0.0.0.0}
 MAXBYTES=${MINDSYNC_MAX_FILE_BYTES:-52428800}
 
-printf '库名      : %s\n' "$NAME"
-printf '端口      : %s\n' "$PORT"
-printf '数据目录  : %s\n' "$DIR"
-printf '项目名    : %s   （容器 %s / %s）\n' "$PROJECT" "$APP_CONTAINER" "$PG_CONTAINER"
-printf '监听地址  : %s\n\n' "$BIND"
+printf 'Library   : %s\n' "$NAME"
+printf 'Port      : %s\n' "$PORT"
+printf 'Data dir  : %s\n' "$DIR"
+printf 'Project   : %s   (containers %s / %s)\n' "$PROJECT" "$APP_CONTAINER" "$PG_CONTAINER"
+printf 'Bind IP   : %s\n\n' "$BIND"
 
 read_secret() {
     if [ -t 0 ]; then stty -echo; fi
@@ -142,23 +142,23 @@ attempt=0
 while :; do
     attempt=$((attempt + 1))
     if [ "$attempt" -gt 10 ]; then
-        echo "错误: 输入失败次数过多，已放弃。" >&2
+        echo "Error: too many unsuccessful attempts; aborting." >&2
         exit 1
     fi
-    printf '请输入该库的管理令牌（至少 32 位；注册设备时使用）: '
+    printf 'Enter the library admin token (at least 32 characters; used to register devices): '
     TOKEN=$(read_secret)
     if [ "${#TOKEN}" -lt 32 ]; then
-        printf '错误: 管理令牌需要至少 32 位，你输入了 %s 位。服务端会拒绝更短的令牌，请重新输入。\n\n' "${#TOKEN}"
+        printf 'Error: the admin token needs at least 32 characters; you entered %s. The server rejects shorter tokens. Try again.\n\n' "${#TOKEN}"
         continue
     fi
-    printf '请再输入一次确认: '
+    printf 'Enter it again to confirm: '
     TOKEN2=$(read_secret)
     if [ "$TOKEN" != "$TOKEN2" ]; then
-        printf '错误: 两次输入不一致，请重新输入。\n\n'
+        printf 'Error: the values do not match. Try again.\n\n'
         continue
     fi
     if printf %s "$TOKEN" | grep -qE '[^A-Za-z0-9_.~!@%^&*+=:;,@-]'; then
-        printf '错误: 管理令牌只允许 A-Za-z0-9 与  - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
+        printf 'Error: the admin token allows only A-Za-z0-9 and - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
         continue
     fi
     break
@@ -168,23 +168,23 @@ attempt=0
 while :; do
     attempt=$((attempt + 1))
     if [ "$attempt" -gt 10 ]; then
-        echo "错误: 输入失败次数过多，已放弃。" >&2
+        echo "Error: too many unsuccessful attempts; aborting." >&2
         exit 1
     fi
-    printf '请输入该库的 PostgreSQL 密码（长度不限）: '
+    printf 'Enter the library PostgreSQL password (any length): '
     DBPW=$(read_secret)
     if [ -z "$DBPW" ]; then
-        printf '错误: 密码不能为空，请重新输入。\n\n'
+        printf 'Error: the password cannot be empty. Try again.\n\n'
         continue
     fi
-    printf '请再输入一次确认: '
+    printf 'Enter it again to confirm: '
     DBPW2=$(read_secret)
     if [ "$DBPW" != "$DBPW2" ]; then
-        printf '错误: 两次输入不一致，请重新输入。\n\n'
+        printf 'Error: the values do not match. Try again.\n\n'
         continue
     fi
     if printf %s "$DBPW" | grep -qE '[^A-Za-z0-9_.~!@%^&*+=:;,@-]'; then
-        printf '错误: 数据库密码只允许 A-Za-z0-9 与  - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
+        printf 'Error: the database password allows only A-Za-z0-9 and - _ . ~ ! @ %% ^ & * + = : ; ,\n\n'
         continue
     fi
     break
@@ -192,21 +192,21 @@ done
 
 mkdir -p "$DIR"
 
-# 数据目录的属主：容器以该身份运行。
-# 不 chown 成镜像内置的 10001 —— 飞牛等存储层只放行已知用户，未知 uid 会因 ACL 写入失败。
+# Run the container as the data directory owner.
+# Do not chown to the image UID 10001: fnOS storage ACLs may reject unknown users.
 OWNER=$(stat -c '%u %g' "$DIR" 2>/dev/null || stat -f '%u %g' "$DIR" 2>/dev/null || echo "")
 RUN_UID=$(printf '%s' "$OWNER" | awk '{print $1}')
 RUN_GID=$(printf '%s' "$OWNER" | awk '{print $2}')
 if [ -z "$RUN_UID" ] || [ -z "$RUN_GID" ]; then
-    echo "错误: 无法读取 $DIR 的属主" >&2
+    echo "Error: cannot read the owner of $DIR" >&2
     exit 1
 fi
 if [ "$RUN_UID" = "0" ]; then
     RUN_UID=10001
     RUN_GID=10001
-    echo "警告: $DIR 属主是 root；将改以 10001 运行。建议先把该目录改归你的账号所有。" >&2
+    echo "Warning: $DIR is owned by root; using UID 10001. Prefer assigning the directory to your user first." >&2
 fi
-printf '容器运行身份: %s:%s（数据目录属主）\n' "$RUN_UID" "$RUN_GID"
+printf 'Container user: %s:%s (data directory owner)\n' "$RUN_UID" "$RUN_GID"
 
 umask 077
 {
@@ -227,14 +227,14 @@ chmod 600 "$ENV_FILE"
 printf '%s\n' "$NAME" > "$MARKER"
 unset TOKEN TOKEN2 DBPW DBPW2
 
-# 确保镜像存在。--no-start 时也要：随后的 restore 会用到该镜像。
+# Ensure the image exists, including with --no-start, because restore needs it.
 if docker image inspect mindsync:latest >/dev/null 2>&1; then
-    echo "复用已有镜像 mindsync:latest。"
+    echo "Reusing the existing mindsync:latest image."
 else
-    echo "未找到镜像 mindsync:latest，先构建（首次需拉取 Rust 基础镜像与 crates，较慢）。"
-    echo "注: 构建使用 --network=host —— 部分 NAS 的容器默认 DNS 不可用，构建容器会解析失败。"
+    echo "mindsync:latest was not found. Building it first (the initial Rust image and crate downloads may take time)."
+    echo "Note: builds use --network=host because some NAS container DNS configurations cannot resolve build dependencies."
     if ! docker build --network=host -t mindsync:latest .; then
-        echo "错误: 镜像构建失败。" >&2
+        echo "Error: image build failed." >&2
         exit 1
     fi
 fi
@@ -242,31 +242,31 @@ fi
 if [ "$NO_START" = "1" ]; then
     cat <<SUMMARY
 
-库 '$NAME' 已准备完成（未启动）。
+Library '$NAME' is prepared (not started).
 
-  数据目录   : $DIR
-  凭据文件   : $ENV_FILE              （权限 600）
-  启动       : docker compose -p $PROJECT --env-file $ENV_FILE up -d
+  Data dir    : $DIR
+  Credentials : $ENV_FILE              (mode 600)
+  Start       : docker compose -p $PROJECT --env-file $ENV_FILE up -d
 
-用途: 先准备一个空库，再用 scripts/restore.sh 恢复备份，或稍后再启动。
+Use this empty library for scripts/restore.sh, or start it later.
 SUMMARY
     exit 0
 fi
 
-echo "正在启动 $PROJECT ..."
-# 不使用 --wait: 首次启动含数据库迁移与可读文件树重建，容器可能经历一次重启，
-# compose 会在此时判定失败。改为启动后自行轮询 /health。
+echo "Starting $PROJECT ..."
+# Do not use --wait: initial migrations and projection rebuilding may involve a restart.
+# Compose may report failure too early; poll /health after starting instead.
 if ! docker compose -p "$PROJECT" --env-file "$ENV_FILE" up -d; then
     echo >&2
-    echo "错误: 启动失败。排查: docker compose -p $PROJECT --env-file $ENV_FILE logs --tail 100" >&2
+    echo "Error: startup failed. Diagnose with: docker compose -p $PROJECT --env-file $ENV_FILE logs --tail 100" >&2
     exit 1
 fi
 
-printf '等待该库 /health 就绪（首次可能需要一两分钟）... '
+printf 'Waiting for /health (initial startup may take a minute or two)... '
 i=0
 while [ "$i" -lt 120 ]; do
     if curl -fsS --max-time 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
-        echo '通过。'
+        echo 'OK.'
         i=-1
         break
     fi
@@ -275,7 +275,7 @@ while [ "$i" -lt 120 ]; do
 done
 if [ "$i" != "-1" ]; then
     echo
-    echo "错误: /health 未在 240 秒内通过。排查:" >&2
+    echo "Error: /health was not ready within 240 seconds. Diagnose with:" >&2
     echo "  docker compose -p $PROJECT --env-file $ENV_FILE ps" >&2
     echo "  docker compose -p $PROJECT --env-file $ENV_FILE logs --tail 100 mindsync" >&2
     exit 1
@@ -283,18 +283,18 @@ fi
 
 cat <<SUMMARY
 
-库 '$NAME' 已就绪。
+Library '$NAME' is ready.
 
-  服务地址   : http://<NAS 地址>:$PORT        （本机: http://127.0.0.1:$PORT）
-  可读文件树 : $DIR/vault/
-  历史内容   : $DIR/objects/                  （不要手动删除）
-  凭据文件   : $ENV_FILE                      （权限 600，备份脚本不包含它，请另行备份）
-  容器       : $APP_CONTAINER / $PG_CONTAINER
+  Server URL  : http://<NAS-IP>:$PORT        (local: http://127.0.0.1:$PORT)
+  File tree   : $DIR/vault/
+  History     : $DIR/objects/                  (do not delete manually)
+  Credentials : $ENV_FILE                      (mode 600; back up separately, excluded by backup.sh)
+  Containers  : $APP_CONTAINER / $PG_CONTAINER
   compose    : -p $PROJECT --env-file $ENV_FILE
 
-下一步：在对应的 vault 里安装插件 → 填服务地址 → 用该库的管理令牌注册设备。
+Next: install the plugin in this vault, enter the server URL, and register using this library admin token.
 
-日常操作（务必带 -p，避免误操作到其它库）:
+Routine commands (always include -p to target the correct library):
   docker compose -p $PROJECT --env-file $ENV_FILE ps
   docker compose -p $PROJECT --env-file $ENV_FILE logs --tail 100 mindsync
   docker compose -p $PROJECT --env-file $ENV_FILE down
@@ -303,7 +303,7 @@ SUMMARY
 if [ "$BIND" = "0.0.0.0" ]; then
     cat <<'NOTE'
 
-注意: 监听地址为 0.0.0.0，该端口会向所在网络开放。请确认网络边界，
-      外网访问必须使用有效证书的 HTTPS 反向代理，不要直接暴露本端口。
+Note: binding to 0.0.0.0 exposes this port to the local network. Review network access.
+      Use an HTTPS reverse proxy with a valid certificate for internet access.
 NOTE
 fi

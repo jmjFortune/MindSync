@@ -33,14 +33,14 @@ export class SyncEngine {
   }
   private async checkInfo() {
     const info = await this.remote.info();
-    if (![1,2].includes(info.protocol)) throw new SyncError('PROTOCOL_MISMATCH', '服务器协议不兼容');
-    if (this.state.vaultId && this.state.vaultId !== info.vault_id) throw new SyncError('VAULT_MISMATCH', '服务器属于另一份笔记库，请在新的本地库连接，避免混合数据');
+    if (![1,2].includes(info.protocol)) throw new SyncError('PROTOCOL_MISMATCH', 'Incompatible server protocol');
+    if (this.state.vaultId && this.state.vaultId !== info.vault_id) throw new SyncError('VAULT_MISMATCH', 'The server belongs to a different library. Connect from a new local vault to avoid mixing data');
     const high = Object.values(this.state.files).reduce((high,f) => Math.max(high,f.revision), Math.max(this.state.cursor, this.state.remoteHighWatermark ?? 0));
-    if (this.state.vaultId && info.cursor < high) throw new SyncError('SERVER_ROLLBACK', '服务器已恢复较早的备份。请保留当前本地库，在新的本地库连接后再预览导入后续修改');
+    if (this.state.vaultId && info.cursor < high) throw new SyncError('SERVER_ROLLBACK', 'The server was restored from an older backup. Preserve this local vault, connect from a new vault, then preview importing later edits');
     this.state.remoteHighWatermark = Math.max(high, info.cursor);
     if (info.protocol === 2) {
       if (info.chunk_algo !== 'fastcdc' || !this.remote.missing || !this.remote.uploadChunk || !this.remote.downloadChunk)
-        throw new SyncError('PROTOCOL_MISMATCH','服务器或客户端缺少分块支持');
+        throw new SyncError('PROTOCOL_MISMATCH','The server or client does not support chunked transfers');
       validateParameters({min:info.chunk_min!,avg:info.chunk_avg!,max:info.chunk_max!});
     }
     this.infoValue = info; return info;
@@ -52,18 +52,18 @@ export class SyncEngine {
     for (const path of paths) {
       validatePath(path); const bytes = await this.local.read(path); if (!bytes) continue;
       const file = byPath.get(path); const hash = await digest(bytes);
-      if (!file) plan.push({action: '上传', path});
+      if (!file) plan.push({action: 'Upload', path});
       else if (file.hash !== hash) {
         const base = this.state.files[file.id];
-        plan.push({action: base?.revision === file.revision ? '上传修改' : '保留冲突副本并下载远端', path});
+        plan.push({action: base?.revision === file.revision ? 'Upload edits' : 'Preserve a conflict copy and download the remote version', path});
       }
       byPath.delete(path);
     }
-    for (const f of byPath.values()) plan.push({action: this.state.initialized && this.state.files[f.id]?.revision === f.revision ? '上传删除' : '下载', path: f.path});
+    for (const f of byPath.values()) plan.push({action: this.state.initialized && this.state.files[f.id]?.revision === f.revision ? 'Upload deletion' : 'Download', path: f.path});
     for (const f of remote.files.filter(f => f.deleted)) {
-      if (this.state.files[f.id] && paths.includes(this.state.files[f.id].path)) plan.push({action: '处理远端删除；保留本地未同步修改', path: f.path});
+      if (this.state.files[f.id] && paths.includes(this.state.files[f.id].path)) plan.push({action: 'Apply remote deletion and preserve unsynced local edits', path: f.path});
     }
-    for (const c of this.state.pending) plan.push({action: '重试待同步操作', path: c.op.path ?? this.state.files[c.op.file_id]?.path ?? c.op.file_id});
+    for (const c of this.state.pending) plan.push({action: 'Retry pending operation', path: c.op.path ?? this.state.files[c.op.file_id]?.path ?? c.op.file_id});
     return plan;
   }
   async sync(allowInitialMerge = false): Promise<void> {
@@ -85,7 +85,7 @@ export class SyncEngine {
       if (!this.state.initialized) {
         const snapshot = await this.remote.snapshot();
         if ((await this.local.list()).length && snapshot.files.some(f => !f.deleted) && !allowInitialMerge && !this.state.initialMergeApproved)
-          throw new SyncError('INITIAL_MERGE_REQUIRED', '首次连接本地库和远端库都有文件，请预览后选择合并');
+          throw new SyncError('INITIAL_MERGE_REQUIRED', 'Both local and remote libraries contain files. Preview the initial merge before syncing');
         this.state.vaultId = info.vault_id; this.state.initialMergeApproved=true; await this.save();
         if (!(await applyFiles(snapshot.files, true))) throw errors[0];
         this.state.initialized = true; delete this.state.initialMergeApproved; this.state.cursor = snapshot.cursor; await this.save();
@@ -124,15 +124,15 @@ export class SyncEngine {
     } finally { this.running = false; this.setProgress(); }
   }
   async restore(fileId: string, version: FileRecord): Promise<void> {
-    if (this.running) throw new SyncError('SYNC_BUSY', '同步进行中，请稍后恢复');
+    if (this.running) throw new SyncError('SYNC_BUSY', 'Sync is in progress. Try restoring later');
     this.running = true; this.failedOperations.clear();
     try {
       await this.checkInfo();
       const base = this.state.files[fileId];
-      if (!base || version.id !== fileId || version.deleted) throw new SyncError('INVALID_VERSION', '无法恢复此历史版本');
-      if (this.state.pending.some(c => c.op.file_id === fileId)) throw new SyncError('PENDING_OPERATION', '该文件还有待同步修改，请先同步后恢复');
+      if (!base || version.id !== fileId || version.deleted) throw new SyncError('INVALID_VERSION', 'This historical revision cannot be restored');
+      if (this.state.pending.some(c => c.op.file_id === fileId)) throw new SyncError('PENDING_OPERATION', 'This file has pending changes. Sync them before restoring');
       const bytes = await this.downloadFile(version);
-      if (await digest(bytes) !== version.hash || bytes.length !== version.size) throw new SyncError('HASH_MISMATCH', '历史内容校验失败');
+      if (await digest(bytes) !== version.hash || bytes.length !== version.size) throw new SyncError('HASH_MISMATCH', 'Historical content failed checksum verification');
       const local = await this.local.read(base.path);
       if (local) await this.protect(base.path, local);
       const op: Operation = {operation_id: crypto.randomUUID(), kind: 'put', file_id: fileId, path: base.path, base_revision: base.revision, hash: version.hash, size: bytes.length};
@@ -143,7 +143,7 @@ export class SyncEngine {
     } finally { this.running = false; this.setProgress(); }
   }
   private async queue(op: Operation, bytes?: Uint8Array, restore = false) {
-    if (bytes && this.infoValue && bytes.length > this.infoValue.max_file_bytes) throw new SyncError('FILE_TOO_LARGE', `附件超出服务器单文件上限：${op.path}`);
+    if (bytes && this.infoValue && bytes.length > this.infoValue.max_file_bytes) throw new SyncError('FILE_TOO_LARGE', `Attachment exceeds the server file size limit: ${op.path}`);
     let chunks: Chunk[] | undefined;
     if (bytes && this.infoValue?.protocol === 2) {
       chunks = await chunk(bytes,{min:this.infoValue.chunk_min!,avg:this.infoValue.chunk_avg!,max:this.infoValue.chunk_max!});
@@ -159,7 +159,7 @@ export class SyncEngine {
       const components = path.split('/');
       for (let i = 1; i <= components.length; i++) {
         const prefix = components.slice(0,i).join('/'), key = pathKey(prefix);
-        if (occupied.has(key) && occupied.get(key) !== prefix) { errors.push(new SyncError('PATH_CONFLICT', `文件名大小写冲突：${path}`)); handled.add(path); break; }
+        if (occupied.has(key) && occupied.get(key) !== prefix) { errors.push(new SyncError('PATH_CONFLICT', `File name casing conflict: ${path}`)); handled.add(path); break; }
         occupied.set(key, prefix);
       }
     }
@@ -262,26 +262,26 @@ export class SyncEngine {
   private async uploadCandidate(candidate: Candidate) {
     const bytes=decode(candidate.content!);
     if (await digest(bytes) !== candidate.op.hash || bytes.length !== candidate.op.size)
-      throw new SyncError('STATE_CORRUPT','待上传候选内容校验失败');
+      throw new SyncError('STATE_CORRUPT','Pending upload content failed verification');
     if (!candidate.chunks) { await this.remote.upload(candidate.op.hash!,bytes); return; }
     if (this.infoValue?.protocol !== 2 || !this.remote.missing || !this.remote.uploadChunk)
-      throw new SyncError('PROTOCOL_MISMATCH','待上传分块候选需要协议 v2 服务器');
+      throw new SyncError('PROTOCOL_MISMATCH','Pending chunked uploads require a protocol v2 server');
     if (!candidate.chunks.length || candidate.chunks.length>8192 || (!candidate.op.chunked && candidate.chunks.length!==1))
-      throw new SyncError('STATE_CORRUPT','待上传块清单无效');
+      throw new SyncError('STATE_CORRUPT','Invalid pending chunk manifest');
     // Never regenerate a pending manifest: it is part of the operation fingerprint.
     const blocks = new Map<string,Uint8Array>(); let offset=0;
     for (const part of candidate.chunks) {
       if (!Number.isSafeInteger(part.size) || part.size<0 || offset+part.size>bytes.length || !/^[a-f0-9]{64}$/.test(part.hash))
-        throw new SyncError('STATE_CORRUPT','待上传块清单损坏');
+        throw new SyncError('STATE_CORRUPT','The pending chunk manifest is corrupted');
       const block=bytes.subarray(offset,offset+part.size);
-      if (await digest(block) !== part.hash) throw new SyncError('STATE_CORRUPT','待上传块校验失败');
+      if (await digest(block) !== part.hash) throw new SyncError('STATE_CORRUPT','Pending chunk failed checksum verification');
       blocks.set(part.hash,block); offset+=part.size;
     }
     if (offset!==bytes.length || (candidate.op.chunked && JSON.stringify(candidate.op.chunks)!==JSON.stringify(candidate.chunks)))
-      throw new SyncError('STATE_CORRUPT','待上传块清单不完整');
+      throw new SyncError('STATE_CORRUPT','The pending chunk manifest is incomplete');
     const reply=await this.remote.missing([...blocks.keys()]);
     if (!Array.isArray(reply.missing) || reply.missing.some(h=>!blocks.has(h)) || new Set(reply.missing).size!==reply.missing.length || reply.present!==blocks.size-reply.missing.length)
-      throw new SyncError('INVALID_RESPONSE','服务器返回无效的缺失块列表');
+      throw new SyncError('INVALID_RESPONSE','The server returned an invalid missing-chunk list');
     let completed=blocks.size-reply.missing.length;
     const report=()=>this.setProgress({path:candidate.op.path??candidate.op.file_id,direction:'upload',completed,total:blocks.size});
     report();
@@ -301,22 +301,22 @@ export class SyncEngine {
   private async downloadFile(file: FileRecord): Promise<Uint8Array> {
     if (!file.chunked) return this.remote.download(file.hash);
     if (!this.remote.downloadChunk || !file.chunks?.length || file.chunks.length>8192 || !Number.isSafeInteger(file.size) || file.size<0 || file.size>(this.infoValue?.max_file_bytes??52428800))
-      throw new SyncError('INVALID_MANIFEST','远端块清单或文件大小无效');
+      throw new SyncError('INVALID_MANIFEST','Invalid remote chunk manifest or file size');
     let total=0;
     for (const part of file.chunks) {
       if (!Number.isSafeInteger(part.size) || part.size<=0 || part.size>(this.infoValue?.chunk_max??262144) || !/^[a-f0-9]{64}$/.test(part.hash))
-        throw new SyncError('INVALID_MANIFEST','远端块清单无效');
+        throw new SyncError('INVALID_MANIFEST','Invalid remote chunk manifest');
       total+=part.size;
     }
-    if (total!==file.size) throw new SyncError('INVALID_MANIFEST','远端块清单总大小不匹配');
+    if (total!==file.size) throw new SyncError('INVALID_MANIFEST','Remote chunk sizes do not match the file size');
     const bytes=new Uint8Array(file.size); let offset=0,completed=0;
     for (const part of file.chunks) {
       this.setProgress({path:file.path,direction:'download',completed,total:file.chunks.length});
       const block=await this.remote.downloadChunk(part.hash);
-      if (block.length!==part.size || await digest(block)!==part.hash) throw new SyncError('HASH_MISMATCH','远端块内容校验失败');
+      if (block.length!==part.size || await digest(block)!==part.hash) throw new SyncError('HASH_MISMATCH','Remote chunk failed checksum verification');
       bytes.set(block,offset); offset+=block.length; completed++;
     }
-    if (await digest(bytes)!==file.hash) throw new SyncError('HASH_MISMATCH','远端整文件校验失败');
+    if (await digest(bytes)!==file.hash) throw new SyncError('HASH_MISMATCH','Remote file failed checksum verification');
     this.setProgress({path:file.path,direction:'download',completed,total:file.chunks.length});
     return bytes;
   }
@@ -361,22 +361,22 @@ export class SyncEngine {
     let bytes: Uint8Array | null = null;
     if (!file.deleted) {
       bytes = await this.downloadFile(file);
-      if (await digest(bytes) !== file.hash || bytes.length !== file.size) throw new SyncError('HASH_MISMATCH', `远端内容校验失败：${file.path}`);
+      if (await digest(bytes) !== file.hash || bytes.length !== file.size) throw new SyncError('HASH_MISMATCH', `Remote content failed checksum verification: ${file.path}`);
     }
     if (base && base.path !== file.path && !base.deleted) {
       const old = await this.local.read(base.path);
       if (old) {
         const hash = await digest(old); if (hash !== base.hash) await this.protect(base.path, old);
-        if (!(await this.local.replace(base.path, null, hash))) throw new SyncError('LOCAL_CHANGED', '本地文件正在修改，稍后重试');
+        if (!(await this.local.replace(base.path, null, hash))) throw new SyncError('LOCAL_CHANGED', 'The local file changed. Try again later');
       }
     }
     const local = await this.local.read(file.path); const localHash = local ? await digest(local) : null;
     if (local && localHash !== (base?.hash ?? file.hash) && localHash !== file.hash) await this.protect(file.path, local);
     if (file.deleted && local && localHash !== base?.hash) await this.protect(file.path, local);
     if (file.deleted) {
-      if (local && !(await this.local.replace(file.path, null, localHash))) throw new SyncError('LOCAL_CHANGED', '删除前文件发生修改，稍后重试');
+      if (local && !(await this.local.replace(file.path, null, localHash))) throw new SyncError('LOCAL_CHANGED', 'The file changed before deletion. Try again later');
     } else if (localHash !== file.hash) {
-      if (!(await this.local.replace(file.path, bytes, localHash))) throw new SyncError('LOCAL_CHANGED', '下载期间文件发生修改，已保留待下一次同步');
+      if (!(await this.local.replace(file.path, bytes, localHash))) throw new SyncError('LOCAL_CHANGED', 'The file changed during download. It has been preserved for the next sync');
     }
     // A local deletion concurrent with a remote edit recreates the remote version.
     this.state.files[file.id] = incoming;

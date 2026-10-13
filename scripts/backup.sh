@@ -2,13 +2,13 @@
 # Pause application writes; PostgreSQL remains up for a consistent dump.
 set -eu
 cd "$(dirname "$0")/.."
-# 可选：指定库。设置 MINDSYNC_LIBRARY=<库名> 时对该库操作；
-# 不设置时使用默认 compose 项目（兼容单库用法）。
+# Optional library selection: MINDSYNC_LIBRARY=<name> targets that library.
+# Otherwise use the default Compose project for single-library compatibility.
 compose() {
     if [ -n "${MINDSYNC_LIBRARY:-}" ]; then
         envfile="libraries/$MINDSYNC_LIBRARY.env"
         if [ ! -f "$envfile" ]; then
-            echo "错误: 找不到 $envfile" >&2
+            echo "Error: $envfile was not found" >&2
             return 1
         fi
         project=$(grep -E '^MINDSYNC_PROJECT=' "$envfile" | cut -d= -f2 || true)

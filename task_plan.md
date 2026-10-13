@@ -24,3 +24,12 @@
 ## 未覆盖
 
 真实 Obsidian GUI、Windows/Android、前后台生命周期、移动端 requestUrl 与大附件内存仍待硬件验收；不把 headless Vault 的结果当实机 UI。默认 50 MiB 不提高，不宣称全程流式。
+
+## English-only implementation — 2026-10-13
+
+User requires English for everything except documentation. Translate UI, errors, CLI output, comments, and package metadata; preserve runtime behavior and user content. Keep Unicode filename regression coverage through escapes. Release the plugin as 0.2.1; the unchanged Rust runtime remains 0.2.0.
+
+- Source/CLI/config translations and persistent AGENTS.md language rule: complete.
+- Single-worker plugin tests: 73 passed; build, source language audit, CLI usage, shell syntax and Compose validation passed. ZIP/source contents, credential exclusions and SHA-256 checksums passed.
+- Both installed plugins updated to 0.2.1; credentials, pause settings and journal slots verified unchanged.
+- Source/scripts/templates synced to NAS; backend healthy with unchanged image, and notes.env remains mode 600. No backend restart was needed.

@@ -25,7 +25,7 @@ export class ObsidianLocal implements Local {
         if (Number.isSafeInteger(item.sequence) && item.sequence > 0 && state.version === 1 && state.files && state.renames && Array.isArray(state.conflicts) && Array.isArray(state.pending) && Number.isSafeInteger(state.cursor) && recoveryValid && item.checksum === await digest(new TextEncoder().encode(JSON.stringify(data)))) valid.push(item);
       } catch { /* the other slot survives an interrupted write */ }
     }
-    if (exists && !valid.length) throw new SyncError('STATE_CORRUPT','本地同步记录损坏。请恢复插件目录备份，或在新笔记库重新连接');
+    if (exists && !valid.length) throw new SyncError('STATE_CORRUPT','The local sync journal is corrupted. Restore a plugin-directory backup or connect from a new vault');
     const latest = valid.sort((a,b)=>b.sequence-a.sequence)[0]; this.sequence = latest?.sequence ?? 0;
     this.recoveries = latest?.recoveries ?? {};
     this.latestState = latest?.state ?? emptyState();
@@ -47,7 +47,7 @@ export class ObsidianLocal implements Local {
     for (const [path,bytes] of Object.entries(this.recoveries)) if (path.startsWith(original+'/')) {
       const next=target+path.slice(original.length);
       if (next===path) continue;
-      if (this.recoveries[next] !== undefined && this.recoveries[next] !== bytes) throw new SyncError('LOCAL_RECOVERY','附件恢复记录路径冲突，请保留插件状态日志和本地库');
+      if (this.recoveries[next] !== undefined && this.recoveries[next] !== bytes) throw new SyncError('LOCAL_RECOVERY','Attachment recovery paths conflict. Preserve the plugin journal and local vault');
       this.recoveries[next]=bytes; delete this.recoveries[path];
     }
   }
@@ -61,7 +61,7 @@ export class ObsidianLocal implements Local {
       if (staging) await this.app.vault.rename(staging,move.target);
       else if (!this.app.vault.getAbstractFileByPath(move.target) && original) {
         await this.app.vault.rename(original,temporary); await this.app.vault.rename(original,move.target);
-      } else if (!this.app.vault.getAbstractFileByPath(move.target)) throw new SyncError('LOCAL_RECOVERY','目录重命名恢复失败，请保留插件状态日志和本地库');
+      } else if (!this.app.vault.getAbstractFileByPath(move.target)) throw new SyncError('LOCAL_RECOVERY','Folder rename recovery failed. Preserve the plugin journal and local vault');
       this.moveRecoveryPaths(move.original,move.target);
       delete this.folderMoves[temporary]; await this.save(this.latestState);
     }

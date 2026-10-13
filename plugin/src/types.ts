@@ -46,7 +46,7 @@ export const decode = (text: string): Uint8Array => Uint8Array.from(atob(text), 
 export function validatePath(path: string): string {
   const parts = path.split('/');
   if (path !== path.normalize('NFC') || path.length > 1024 || parts.some(p => new TextEncoder().encode(p).length > 255 || !p || p === '.' || p === '..' || /[\\\x00-\x1f<>:"|?*]/.test(p) || /[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(\.|$)/i.test(p)))
-    throw new SyncError('INVALID_PATH', `文件路径不能跨平台同步：${path}`);
+    throw new SyncError('INVALID_PATH', `This file path cannot be synced across platforms: ${path}`);
   return path;
 }
 export function included(path: string, configDir = '.obsidian'): boolean {

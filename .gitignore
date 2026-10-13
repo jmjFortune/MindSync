@@ -12,6 +12,6 @@ backups/
 .DS_Store
 target/
 
-# 每个库的凭据文件（保留模板）
+# Per-library credentials (keep the example template).
 libraries/*.env
 !libraries/example.env
