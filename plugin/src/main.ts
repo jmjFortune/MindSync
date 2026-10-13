@@ -26,6 +26,7 @@ export default class MindSync extends Plugin {
       this.local = new ObsidianLocal(this.app,`${this.app.vault.configDir}/plugins/${this.manifest.id}`);
       this.api = this.makeApi(); const state = await this.local.load();
       this.engine = new SyncEngine(state,this.local,this.api,this.settings.deviceName);
+      this.engine.onProgress=progress=>{if(progress){this.status=`${progress.direction==='upload'?'上传':'下载'} ${progress.path}：${progress.completed}/${progress.total} 块`;this.update();}};
     } catch(e) { this.report(e); }
     const changed = (file: TAbstractFile) => { if (!this.local?.writing && included(file.path,this.app.vault.configDir)) this.schedule(); };
     this.registerEvent(this.app.vault.on('create',changed));
@@ -50,7 +51,7 @@ export default class MindSync extends Plugin {
       const base = connection.server.replace(/\/+$/,'');
       let timer: ReturnType<typeof setTimeout> | undefined;
       const request=requestUrl({url:base+path,method,headers:{Authorization:`Bearer ${connection.token}`,'Content-Type':body instanceof Uint8Array ? 'application/octet-stream':'application/json'},body:body instanceof Uint8Array ? body.slice().buffer : body,throw:false});
-      const reply=await Promise.race([request,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new SyncError('TIMEOUT','请求超时，将保留队列并稍后重试')),120000);})]).finally(()=>{if(timer)clearTimeout(timer);});
+      const reply=await Promise.race([request,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(new SyncError('TIMEOUT','请求超时，将保留队列并稍后重试')),path.startsWith('/v1/chunks/') ? 30000 : 120000);})]).finally(()=>{if(timer)clearTimeout(timer);});
       return {status:reply.status,body:reply.arrayBuffer};
     },token));
   }
@@ -88,8 +89,12 @@ export default class MindSync extends Plugin {
     box.createEl('p',{text:this.settings.paused?'同步已暂停':this.status});
     if(this.lastError)box.createEl('p',{text:this.lastError,cls:'mindsync-error',attr:{role:'alert'}});
     box.createEl('p',{text:`待同步操作：${this.engine?.state.pending.length??0}；最后成功：${this.engine?.state.lastSuccess ? new Date(this.engine.state.lastSuccess).toLocaleString():'尚无'}`,cls:'mindsync-summary'});
+    const transfer=box.createEl('p');
+    const updateTransfer=()=>{const p=this.engine?.progress;transfer.setText(p?`${p.direction==='upload'?'上传':'下载'} ${p.path}：${p.completed}/${p.total} 块`:'');};
+    updateTransfer();const progressTimer=window.setInterval(updateTransfer,500);
+    const close=modal.onClose.bind(modal);modal.onClose=()=>{window.clearInterval(progressTimer);close();};
     const capacity=box.createEl('p',{text:'正在读取 NAS 存储信息…'});
-    void this.api.info().then(info=>capacity.setText(`内容存储：${(info.storage_bytes/1048576).toFixed(1)} MiB；单文件上限：${(info.max_file_bytes/1048576).toFixed(1)} MiB。历史内容暂不自动清理。`)).catch(()=>capacity.setText('暂时无法读取 NAS 存储信息'));
+    void this.api.info().then(info=>capacity.setText(`内容存储：${(info.storage_bytes/1048576).toFixed(1)} MiB；单文件上限：${(info.max_file_bytes/1048576).toFixed(1)} MiB。${info.logical_bytes===undefined?'':`历史逻辑大小：${(info.logical_bytes/1048576).toFixed(1)} MiB；`}历史内容不自动清理，管理端可手动回收无引用对象。`)).catch(()=>capacity.setText('暂时无法读取 NAS 存储信息'));
     box.createEl('p',{text:'Android 关闭应用或被系统挂起时不能保证同步。删除保留在本地 .trash；附件替换备份保存在插件状态日志及 .trash 中。NAS 可读文件树只供查看和导出。'});
     const list=box.createEl('ul',{cls:'mindsync-list'});
     for(const path of this.engine?.state.conflicts??[]){

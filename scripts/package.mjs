@@ -10,7 +10,7 @@ for(const file of ['main.js','manifest.json','styles.css'])await copyFile(resolv
 const archive=resolve(root,'dist',`mindsync-plugin-${manifest.version}.zip`);await rm(archive,{force:true});
 execFileSync('zip',['-qr',archive,manifest.id],{cwd:resolve(root,'dist')});
 console.log(`Plugin package: ${archive}`);
-execFileSync('tar',['--exclude=.git','--exclude=node_modules','--exclude=target','--exclude=.env','--exclude=dist','--exclude=main.js','--exclude=plugin/dist','-czf',resolve(root,'dist',`mindsync-source-${manifest.version}.tar.gz`),'README.md','docs','server','plugin','scripts','libraries/example.env','Dockerfile','compose.yaml','.dockerignore','.env.example','.gitignore'],{cwd:root});
+execFileSync('tar',['--no-xattrs','--no-acls','--exclude=.DS_Store','--exclude=._*','--exclude=.git','--exclude=node_modules','--exclude=target','--exclude=.env','--exclude=dist','--exclude=main.js','--exclude=plugin/dist','-czf',resolve(root,'dist',`mindsync-source-${manifest.version}.tar.gz`),'README.md','docs','server','plugin','scripts','libraries/example.env','Dockerfile','compose.yaml','.dockerignore','.env.example','.gitignore'],{cwd:root,env:{...process.env,COPYFILE_DISABLE:'1'}});
 console.log('Source archive created without credentials, build caches or local data');
 const names=[`mindsync-plugin-${manifest.version}.zip`,`mindsync-source-${manifest.version}.tar.gz`];
 const checksums=await Promise.all(names.map(async name=>`${createHash('sha256').update(await readFile(resolve(root,'dist',name))).digest('hex')}  ${name}`));

@@ -33,6 +33,9 @@ async fn request(
     )
 }
 async fn fixture() -> (Router, tempfile::TempDir) {
+    fixture_with_limit(1024).await
+}
+async fn fixture_with_limit(limit: usize) -> (Router, tempfile::TempDir) {
     let db = std::env::var("TEST_DATABASE_URL")
         .expect("TEST_DATABASE_URL must point to a disposable PostgreSQL database");
     let pool = sqlx::PgPool::connect(&db).await.unwrap();
@@ -46,7 +49,7 @@ async fn fixture() -> (Router, tempfile::TempDir) {
         data: dir.path().canonicalize().unwrap(),
         database_url: db,
         admin_token: ADMIN.into(),
-        max_file_bytes: 1024,
+        max_file_bytes: limit,
     })
     .await
     .unwrap();
@@ -1023,5 +1026,463 @@ async fn same_identity_ancestor_to_descendant_recovery() {
             .await
             .1["cursor"],
         2
+    );
+}
+
+async fn upload_chunk(router: &Router, bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(bytes));
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/chunks/{hash}"))
+        .header("authorization", format!("Bearer {ADMIN}"))
+        .body(Body::from(bytes.to_vec()))
+        .unwrap();
+    let reply = router.clone().oneshot(req).await.unwrap();
+    assert_eq!(reply.status(), StatusCode::OK);
+    hash
+}
+fn chunk_put(op: &str, id: &str, path: &str, rev: i64, bytes: &[u8], chunks: &Value) -> Value {
+    use sha2::{Digest, Sha256};
+    let mut body = put(
+        op,
+        id,
+        path,
+        rev,
+        &hex::encode(Sha256::digest(bytes)),
+        bytes.len(),
+    );
+    body["chunked"] = json!(true);
+    body["chunks"] = chunks.clone();
+    body
+}
+async fn binary_get(router: &Router, path: &str) -> (StatusCode, Vec<u8>) {
+    let req = Request::builder()
+        .uri(path)
+        .header("authorization", format!("Bearer {ADMIN}"))
+        .body(Body::empty())
+        .unwrap();
+    let response = router.clone().oneshot(req).await.unwrap();
+    let status = response.status();
+    (
+        status,
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+}
+fn age_objects(dir: &std::path::Path) {
+    let old = std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86400);
+    for entry in std::fs::read_dir(dir.join("objects")).unwrap() {
+        std::fs::File::open(entry.unwrap().path())
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(old))
+            .unwrap();
+    }
+}
+#[tokio::test]
+async fn chunk_manifests_deduplicate_and_rebuild_after_restart() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture_with_limit(20 * 1024 * 1024).await;
+    let bytes = (0..2 * 1024 * 1024)
+        .map(|i| ((i * 31 + i / 262144) % 251) as u8)
+        .collect::<Vec<_>>();
+    let mut manifest = Vec::new();
+    for part in bytes.chunks(262144) {
+        let hash = upload_chunk(&router, part).await;
+        manifest.push(json!({"hash":hash,"size":part.len()}));
+    }
+    let chunks = json!(manifest);
+    let (status, result) = operation(
+        &router,
+        ADMIN,
+        chunk_put("chunks-one", "one", "one.bin", 0, &bytes, &chunks),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["file"]["chunks"], chunks);
+    let (_, missing) = request(
+        &router,
+        "POST",
+        "/v1/chunks/missing",
+        ADMIN,
+        json!({"hashes":manifest.iter().map(|c| c["hash"].clone()).collect::<Vec<_>>()}),
+    )
+    .await;
+    assert_eq!(missing["missing"], json!([]));
+    let (_, before) = request(&router, "GET", "/v1/info", ADMIN, Value::Null).await;
+    let (status, result) = operation(
+        &router,
+        ADMIN,
+        chunk_put("chunks-two", "two", "two.bin", 0, &bytes, &chunks),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let (_, after) = request(&router, "GET", "/v1/info", ADMIN, Value::Null).await;
+    assert_eq!(before["storage_bytes"], after["storage_bytes"]);
+    assert_eq!(after["logical_bytes"], bytes.len() * 2);
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/two.bin")).unwrap(),
+        bytes
+    );
+    let (status,renamed)=operation(&router,ADMIN,json!({"operation_id":"rename-chunks","kind":"rename","file_id":"one","path":"new.bin","base_revision":1})).await;
+    assert_eq!(status, StatusCode::OK, "{renamed}");
+    assert_eq!(renamed["file"]["chunks"], chunks);
+    let (status, deleted) = operation(
+        &router,
+        ADMIN,
+        json!({"operation_id":"delete-chunks","kind":"delete","file_id":"one","base_revision":3}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{deleted}");
+    assert_eq!(deleted["file"]["chunks"], chunks);
+    let restarted = app(Config {
+        data: dir.path().canonicalize().unwrap(),
+        database_url: std::env::var("TEST_DATABASE_URL").unwrap(),
+        admin_token: ADMIN.into(),
+        max_file_bytes: 20 * 1024 * 1024,
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/two.bin")).unwrap(),
+        bytes
+    );
+    let (_, history) = request(
+        &restarted,
+        "GET",
+        "/v1/files/one/history",
+        ADMIN,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(history["versions"][0]["chunks"], chunks);
+    let (status, restored) = operation(
+        &restarted,
+        ADMIN,
+        chunk_put("restore-chunks", "one", "new.bin", 4, &bytes, &chunks),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/new.bin")).unwrap(),
+        bytes
+    );
+}
+#[tokio::test]
+async fn missing_chunks_and_invalid_manifests_roll_back() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture().await;
+    let first = upload_chunk(&router, b"first").await;
+    use sha2::{Digest, Sha256};
+    let second = hex::encode(Sha256::digest(b"second"));
+    let chunks = json!([{"hash":first,"size":5},{"hash":second,"size":6}]);
+    let body = chunk_put("resume", "note", "note.bin", 0, b"firstsecond", &chunks);
+    let (status, missing) = operation(&router, ADMIN, body.clone()).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(missing["error"]["code"], "MISSING_CHUNK");
+    assert_eq!(missing["error"]["missing"], json!([second]));
+    let (_, snapshot) = request(&router, "GET", "/v1/snapshot", ADMIN, Value::Null).await;
+    assert_eq!(snapshot["cursor"], 0);
+    assert_eq!(snapshot["files"], json!([]));
+    let (_, ledger) = request(&router, "GET", "/v1/operations/resume", ADMIN, Value::Null).await;
+    assert_eq!(ledger["error"]["code"], "NOT_FOUND");
+    let (_, missing) = request(
+        &router,
+        "POST",
+        "/v1/chunks/missing",
+        ADMIN,
+        json!({"hashes":[first,second,first]}),
+    )
+    .await;
+    assert_eq!(missing["present"], 1);
+    assert_eq!(missing["missing"], json!([second]));
+    upload_chunk(&router, b"second").await;
+    let (status, committed) = operation(&router, ADMIN, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{committed}");
+    let (status, replayed) = operation(&router, ADMIN, body).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(replayed, committed);
+    let mut changed = chunk_put("resume", "note", "note.bin", 0, b"firstsecond", &chunks);
+    changed["chunks"][0]["hash"] = json!("0".repeat(64));
+    let (status, reused) = operation(&router, ADMIN, changed).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(reused["error"]["code"], "OPERATION_REUSED");
+    let absent = "1".repeat(64);
+    let mut single = put("missing-single", "single", "single.bin", 0, &absent, 1);
+    single["chunked"] = json!(false);
+    single["chunks"] = json!([{"hash":absent,"size":1}]);
+    let (status, missing_single) = operation(&router, ADMIN, single).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(missing_single["error"]["code"], "MISSING_CHUNK");
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/note.bin")).unwrap(),
+        b"firstsecond"
+    );
+    for parts in [
+        json!([]),
+        json!([{"hash":first,"size":0}]),
+        json!([{"hash":first,"size":4}]),
+    ] {
+        let (status, error) = operation(
+            &router,
+            ADMIN,
+            chunk_put("invalid", "other", "other.bin", 0, b"firstsecond", &parts),
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(error["error"]["code"], "INVALID_MANIFEST");
+    }
+    let mut wrong = chunk_put(
+        "wrong-hash",
+        "other",
+        "other.bin",
+        0,
+        b"firstsecond",
+        &chunks,
+    );
+    wrong["hash"] = json!("0".repeat(64));
+    let (_, error) = operation(&router, ADMIN, wrong).await;
+    assert_eq!(error["error"]["code"], "INVALID_MANIFEST");
+    let req = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/chunks/{}", "0".repeat(64)))
+        .header("authorization", format!("Bearer {ADMIN}"))
+        .body(Body::from(vec![0u8; 262145]))
+        .unwrap();
+    assert_eq!(
+        router.clone().oneshot(req).await.unwrap().status(),
+        StatusCode::PAYLOAD_TOO_LARGE
+    );
+}
+#[tokio::test]
+async fn manual_gc_protects_legacy_history_chunks_and_resumed_uploads() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture().await;
+    let legacy = upload(&router, ADMIN, b"legacy").await;
+    let (_, old) = operation(
+        &router,
+        ADMIN,
+        put("legacy", "old", "legacy.md", 0, &legacy, 6),
+    )
+    .await;
+    let left = upload_chunk(&router, b"left").await;
+    let right = upload_chunk(&router, b"right").await;
+    let chunks = json!([{"hash":left,"size":4},{"hash":right,"size":5}]);
+    let (status, result) = operation(
+        &router,
+        ADMIN,
+        chunk_put("chunked", "new", "new.bin", 0, b"leftright", &chunks),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    operation(
+        &router,
+        ADMIN,
+        json!({"operation_id":"delete-new","kind":"delete","file_id":"new","base_revision":2}),
+    )
+    .await;
+    let orphan = upload_chunk(&router, b"orphan").await;
+    let resumed = upload_chunk(&router, b"resumed").await;
+    age_objects(dir.path());
+    request(
+        &router,
+        "POST",
+        "/v1/chunks/missing",
+        ADMIN,
+        json!({"hashes":[resumed]}),
+    )
+    .await;
+    let (_, before) = request(&router, "GET", "/v1/info", ADMIN, Value::Null).await;
+    let (_, preview) = request(&router, "POST", "/v1/maintenance/gc", ADMIN, json!({})).await;
+    assert_eq!(preview["dry_run"], true);
+    assert_eq!(preview["objects"], 1);
+    assert!(dir.path().join("objects").join(&orphan).exists());
+    let (_, collected) = request(
+        &router,
+        "POST",
+        "/v1/maintenance/gc",
+        ADMIN,
+        json!({"dry_run":false}),
+    )
+    .await;
+    assert_eq!(collected["objects"], 1);
+    assert!(!dir.path().join("objects").join(&orphan).exists());
+    for hash in [&legacy, &left, &right, &resumed] {
+        assert!(dir.path().join("objects").join(hash).exists());
+    }
+    let (_, after) = request(&router, "GET", "/v1/info", ADMIN, Value::Null).await;
+    assert_eq!(after["logical_bytes"], before["logical_bytes"]);
+    assert!(after["storage_bytes"].as_u64() < before["storage_bytes"].as_u64());
+    let (status, restored) = operation(
+        &router,
+        ADMIN,
+        chunk_put("restore-gc", "new", "new.bin", 3, b"leftright", &chunks),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/new.bin")).unwrap(),
+        b"leftright"
+    );
+    assert_eq!(
+        binary_get(&router, &format!("/v1/objects/{legacy}"))
+            .await
+            .1,
+        b"legacy"
+    );
+    let (_, device) = request(
+        &router,
+        "POST",
+        "/v1/devices",
+        ADMIN,
+        json!({"name":"phone"}),
+    )
+    .await;
+    let (status, _) = request(
+        &router,
+        "POST",
+        "/v1/maintenance/gc",
+        device["token"].as_str().unwrap(),
+        json!({"dry_run":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let pool = sqlx::PgPool::connect(&std::env::var("TEST_DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    let count =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM version_chunks WHERE revision=3")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 2);
+    let restored = operation(
+        &router,
+        ADMIN,
+        put(
+            "old-restore",
+            "old",
+            "legacy.md",
+            old["file"]["revision"].as_i64().unwrap(),
+            &legacy,
+            6,
+        ),
+    )
+    .await;
+    assert_eq!(restored.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn upgrade_from_v1_schema_preserves_history_and_operation_fingerprints() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture().await;
+    let hash = upload(&router, ADMIN, b"v1 content").await;
+    let body = put("v1-operation", "v1-file", "old.md", 0, &hash, 10);
+    let (status, result) = operation(&router, ADMIN, body.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    // Reconstruct an actual v1 schema/record/ledger, including the 0001 migration
+    // bookkeeping, then let normal startup apply only migration 0002.
+    let pool = sqlx::PgPool::connect(&std::env::var("TEST_DATABASE_URL").unwrap())
+        .await
+        .unwrap();
+    sqlx::raw_sql("DROP TABLE version_chunks; ALTER TABLE files DROP COLUMN chunked; DELETE FROM _sqlx_migrations WHERE version=2; UPDATE changes SET record=record-'chunked'-'chunks'; UPDATE operations SET result=jsonb_set(result,'{file}',(result->'file')-'chunked'-'chunks')")
+        .execute(&pool).await.unwrap();
+    let restarted = app(Config {
+        data: dir.path().canonicalize().unwrap(),
+        database_url: std::env::var("TEST_DATABASE_URL").unwrap(),
+        admin_token: ADMIN.into(),
+        max_file_bytes: 1024,
+    })
+    .await
+    .unwrap();
+    let (status, replay) = operation(&restarted, ADMIN, body).await;
+    assert_eq!(status, StatusCode::OK, "{replay}");
+    assert_eq!(replay["file"]["hash"], hash);
+    assert_eq!(replay["cursor"], 1);
+    assert_eq!(
+        binary_get(&restarted, &format!("/v1/objects/{hash}"))
+            .await
+            .1,
+        b"v1 content"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("vault/old.md")).unwrap(),
+        b"v1 content"
+    );
+    let (_, history) = request(
+        &restarted,
+        "GET",
+        "/v1/files/v1-file/history",
+        ADMIN,
+        Value::Null,
+    )
+    .await;
+    assert_eq!(history["versions"][0]["hash"], hash);
+    let chunked = sqlx::query_scalar::<_, bool>("SELECT chunked FROM files WHERE id='v1-file'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(!chunked);
+    let (status, restored) = operation(
+        &restarted,
+        ADMIN,
+        put("restore-v1", "v1-file", "old.md", 1, &hash, 10),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+}
+#[tokio::test]
+async fn gc_does_not_interfere_with_an_upload_in_progress() {
+    let _serial = DATABASE_TEST.lock().await;
+    let (router, dir) = fixture().await;
+    let orphan = upload_chunk(&router, b"old orphan").await;
+    age_objects(dir.path());
+    use sha2::{Digest, Sha256};
+    let hash = hex::encode(Sha256::digest(b"pending upload"));
+    let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
+    let (entered, started) = tokio::sync::oneshot::channel::<()>();
+    let stream = futures_util::stream::once(async move {
+        entered.send(()).unwrap();
+        receiver.await.unwrap();
+        Ok::<_, std::io::Error>("pending upload")
+    });
+    let upload = Request::builder()
+        .method("PUT")
+        .uri(format!("/v1/chunks/{hash}"))
+        .header("authorization", format!("Bearer {ADMIN}"))
+        .body(Body::from_stream(stream))
+        .unwrap();
+    let upload = tokio::spawn(router.clone().oneshot(upload));
+    started.await.unwrap();
+    let (status, result) = request(
+        &router,
+        "POST",
+        "/v1/maintenance/gc",
+        ADMIN,
+        json!({"dry_run":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert!(!dir.path().join("objects").join(&orphan).exists());
+    sender.send(()).unwrap();
+    assert_eq!(upload.await.unwrap().unwrap().status(), StatusCode::OK);
+    let (status, result) = request(
+        &router,
+        "POST",
+        "/v1/maintenance/gc",
+        ADMIN,
+        json!({"dry_run":false}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["objects"], 0);
+    assert_eq!(
+        binary_get(&router, &format!("/v1/chunks/{hash}")).await.1,
+        b"pending upload"
     );
 }

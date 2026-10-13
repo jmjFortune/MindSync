@@ -40,3 +40,9 @@ export class MemoryRemote implements Remote {
     if(this.loseReply){this.loseReply=false;throw new Error('response lost');}return result;
   }
 }
+
+export function sample(length: number): Uint8Array {
+  const bytes=new Uint8Array(length); let seed=0x13579bdf;
+  for(let i=0;i<length;i++){seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;bytes[i]=seed>>>24;}
+  return bytes;
+}

@@ -265,6 +265,66 @@ impl Storage {
             Err(e) => Err(e),
         }
     }
+    pub fn touch(&self, hash: &str) -> io::Result<()> {
+        let file = self.objects.open(hash)?;
+        file.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))?;
+        file.sync_all()
+    }
+    pub fn verify_manifest(
+        &self,
+        hash: &str,
+        size: i64,
+        chunks: &[(String, i64)],
+    ) -> io::Result<bool> {
+        let mut hasher = Sha256::new();
+        let mut total = 0u64;
+        let mut buffer = [0u8; 65536];
+        for (chunk_hash, chunk_size) in chunks {
+            let mut object = self.verify(chunk_hash, Some(*chunk_size))?;
+            loop {
+                let n = object.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                total = total
+                    .checked_add(n as u64)
+                    .ok_or_else(|| io::Error::other("manifest too large"))?;
+                hasher.update(&buffer[..n]);
+            }
+        }
+        Ok(total == size as u64 && hex::encode(hasher.finalize()) == hash)
+    }
+    pub fn projection_chunks(
+        &self,
+        path: &str,
+        hash: &str,
+        size: i64,
+        chunks: &[(String, i64)],
+    ) -> io::Result<()> {
+        if !self.verify_manifest(hash, size, chunks)? {
+            return Err(io::Error::other("manifest checksum mismatch"));
+        }
+        let (parent, leaf) = self.vault.parent(path, true)?;
+        let temp_name = format!(".mindsync-{}", Uuid::new_v4());
+        let mut file = parent.create(&temp_name)?;
+        let result = (|| {
+            for (hash, size) in chunks {
+                let mut object = self.verify(hash, Some(*size))?;
+                io::copy(&mut object, &mut file)?;
+            }
+            file.flush()?;
+            file.sync_all()?;
+            if let Ok(directory) = parent.child(&leaf, false) {
+                directory.clear_empty_directories()?;
+                parent.remove(&leaf, true)?;
+            }
+            parent.rename(&temp_name, &parent, &leaf)
+        })();
+        if result.is_err() {
+            let _ = parent.remove(&temp_name, false);
+        }
+        result
+    }
     pub fn projection(&self, path: &str, hash: &str, size: i64) -> io::Result<()> {
         let mut object = self.verify(hash, Some(size))?;
         let (parent, leaf) = self.vault.parent(path, true)?;

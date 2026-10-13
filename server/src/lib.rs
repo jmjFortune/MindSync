@@ -1,3 +1,4 @@
+mod chunks;
 mod path;
 mod storage;
 use axum::{
@@ -34,6 +35,7 @@ struct AppState {
     admin_hash: String,
     max_file_bytes: usize,
     writer: Arc<Mutex<()>>,
+    gc_grace: std::time::Duration,
 }
 #[derive(Clone)]
 struct Identity {
@@ -46,6 +48,7 @@ pub struct ApiError {
     code: &'static str,
     message: &'static str,
     current: Option<Option<Box<FileRecord>>>,
+    missing_chunks: Option<Vec<String>>,
 }
 impl ApiError {
     fn new(status: StatusCode, code: &'static str, message: &'static str) -> Self {
@@ -54,6 +57,7 @@ impl ApiError {
             code,
             message,
             current: None,
+            missing_chunks: None,
         }
     }
     fn invalid() -> Self {
@@ -108,6 +112,9 @@ impl IntoResponse for ApiError {
         if let Some(current) = self.current {
             error["current"] = json!(current)
         }
+        if let Some(missing) = self.missing_chunks {
+            error["missing"] = json!(missing);
+        }
         (self.status, Json(json!({"error":error}))).into_response()
     }
 }
@@ -121,7 +128,7 @@ impl From<std::io::Error> for ApiError {
         Self::storage()
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileRecord {
     pub id: String,
     pub path: String,
@@ -129,8 +136,12 @@ pub struct FileRecord {
     pub hash: String,
     pub size: i64,
     pub deleted: bool,
+    #[serde(default)]
+    pub chunked: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chunks: Vec<chunks::Chunk>,
 }
-const FILE_COLUMNS: &str = "id,path,revision,hash,size,deleted";
+
 fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
@@ -166,27 +177,33 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         .await?;
     let storage = Storage::new(&config.data)?;
     // Verify every historical reference before replacing the readable projection.
-    let references=sqlx::query("SELECT DISTINCT hash,size FROM files UNION SELECT DISTINCT record->>'hash' AS hash,(record->>'size')::bigint AS size FROM changes").fetch_all(&pool).await?;
-    for row in references {
-        storage.verify(row.get("hash"), Some(row.get("size")))?;
+    let references = sqlx::query_scalar::<_, Value>("SELECT record FROM changes ORDER BY revision")
+        .fetch_all(&pool)
+        .await?;
+    for record in &references {
+        let file: FileRecord = serde_json::from_value(record.clone())?;
+        chunks::verify_file(&storage, &file)?;
     }
     storage.vault.clear()?;
     storage.tmp.clear()?;
-    let files = sqlx::query_as::<_, FileRecord>(&format!(
-        "SELECT {FILE_COLUMNS} FROM files WHERE NOT deleted ORDER BY path"
-    ))
-    .fetch_all(&pool)
-    .await?;
-    for file in files {
+    let files = sqlx::query_scalar::<_, Value>(
+        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision WHERE NOT f.deleted ORDER BY f.path"
+    ).fetch_all(&pool).await?;
+    for record in files {
+        let file: FileRecord = serde_json::from_value(record)?;
         path::normalize(&file.path).map_err(|_| "Invalid path in authoritative metadata")?;
-        storage.projection(&file.path, &file.hash, file.size)?;
+        chunks::project_file(&storage, &file)?;
     }
+    let gc_grace = std::env::var("MINDSYNC_GC_GRACE_SECONDS")
+        .unwrap_or_else(|_| "604800".into())
+        .parse::<u64>()?;
     let state = AppState {
         pool,
         storage,
         admin_hash: digest(config.admin_token.as_bytes()),
         max_file_bytes: config.max_file_bytes,
         writer: Arc::new(Mutex::new(())),
+        gc_grace: std::time::Duration::from_secs(gc_grace),
     };
     let protected = Router::new()
         .route("/v1/info", get(info))
@@ -195,6 +212,9 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         .route("/v1/snapshot", get(snapshot))
         .route("/v1/changes", get(changes))
         .route("/v1/objects/{hash}", put(upload).get(download))
+        .route("/v1/chunks/missing", post(chunks::missing))
+        .route("/v1/chunks/{hash}", put(chunks::upload).get(download))
+        .route("/v1/maintenance/gc", post(chunks::gc))
         .route("/v1/operations", post(operation))
         .route("/v1/operations/{id}", get(operation_result))
         .route("/v1/files/{id}/history", get(history))
@@ -203,7 +223,7 @@ pub async fn app(config: Config) -> Result<Router, Box<dyn std::error::Error + S
         .route("/health", get(health))
         .merge(protected)
         .fallback(|| async { ApiError::missing() })
-        .layer(DefaultBodyLimit::max(65536))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(middleware::from_fn(structured_errors))
         .with_state(state))
 }
@@ -282,7 +302,7 @@ async fn info(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
         .fetch_one(&state.pool)
         .await?;
     Ok(Json(
-        json!({"protocol":1,"vault_id":row.get::<String,_>("id"),"cursor":row.get::<i64,_>("cursor"),"max_file_bytes":state.max_file_bytes,"storage_bytes":state.storage.usage()?}),
+        json!({"protocol":2,"chunk_algo":"fastcdc","chunk_min":chunks::MIN,"chunk_avg":chunks::AVG,"chunk_max":chunks::MAX,"logical_bytes":sqlx::query_scalar::<_,i64>("SELECT COALESCE(SUM((record->>'size')::bigint),0)::bigint FROM changes").fetch_one(&state.pool).await?,"vault_id":row.get::<String,_>("id"),"cursor":row.get::<i64,_>("cursor"),"max_file_bytes":state.max_file_bytes,"storage_bytes":state.storage.usage()?}),
     ))
 }
 #[derive(Deserialize)]
@@ -351,10 +371,11 @@ async fn snapshot(State(state): State<AppState>) -> Result<Json<Value>, ApiError
     let cursor = sqlx::query_scalar::<_, i64>("SELECT cursor FROM vault")
         .fetch_one(&mut *tx)
         .await?;
-    let files =
-        sqlx::query_as::<_, FileRecord>(&format!("SELECT {FILE_COLUMNS} FROM files ORDER BY id"))
-            .fetch_all(&mut *tx)
-            .await?;
+    let files = sqlx::query_scalar::<_, Value>(
+        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision ORDER BY f.id",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Json(json!({"files":files,"cursor":cursor})))
 }
@@ -402,6 +423,14 @@ async fn upload(
     Path(hash): Path<String>,
     request: Request,
 ) -> Result<Json<Value>, ApiError> {
+    upload_with_limit(state.clone(), hash, request, state.max_file_bytes).await
+}
+async fn upload_with_limit(
+    state: AppState,
+    hash: String,
+    request: Request,
+    limit: usize,
+) -> Result<Json<Value>, ApiError> {
     if !valid_hash(&hash) {
         return Err(ApiError::invalid());
     }
@@ -411,7 +440,7 @@ async fn upload(
             .ok()
             .and_then(|n| n.parse::<u64>().ok())
             .ok_or_else(ApiError::invalid)?;
-        if length > state.max_file_bytes as u64 {
+        if length > limit as u64 {
             return Err(ApiError::too_large());
         }
     }
@@ -425,7 +454,7 @@ async fn upload(
         bytes = bytes
             .checked_add(chunk.len())
             .ok_or_else(ApiError::too_large)?;
-        if bytes > state.max_file_bytes {
+        if bytes > limit {
             return Err(ApiError::too_large());
         }
         hasher.update(&chunk);
@@ -440,7 +469,9 @@ async fn upload(
     }
     file.flush().await?;
     file.sync_all().await?;
+    let _writer = state.writer.lock().await;
     state.storage.publish(&temp, &hash, bytes as i64)?;
+    state.storage.touch(&hash)?;
     Ok(Json(json!({"hash":hash,"size":bytes})))
 }
 async fn download(
@@ -482,6 +513,10 @@ struct Operation {
     base_revision: i64,
     hash: Option<String>,
     size: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chunks: Option<Vec<chunks::Chunk>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    chunked: Option<bool>,
 }
 async fn operation(
     State(state): State<AppState>,
@@ -523,6 +558,7 @@ async fn operation(
         }
         _ => unreachable!(),
     }
+    chunks::validate_operation(&op)?;
     let fingerprint =
         digest(&serde_json::to_vec(&(identity.id.clone(), &op)).map_err(|_| ApiError::invalid())?);
     let _writer = state.writer.lock().await;
@@ -564,11 +600,15 @@ async fn operation(
     {
         return Err(ApiError::too_large());
     }
-    let current =
-        sqlx::query_as::<_, FileRecord>(&format!("SELECT {FILE_COLUMNS} FROM files WHERE id=$1"))
-            .bind(&op.file_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let current = sqlx::query_scalar::<_, Value>(
+        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision WHERE f.id=$1",
+    )
+    .bind(&op.file_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .map(serde_json::from_value::<FileRecord>)
+    .transpose()
+    .map_err(|_| ApiError::storage())?;
     if current.as_ref().map(|c| c.revision).unwrap_or(0) != op.base_revision
         || (current.is_none() && op.kind != "put")
         || (current.as_ref().is_some_and(|c| c.deleted) && op.kind != "put")
@@ -591,6 +631,8 @@ async fn operation(
             hash: op.hash.clone().unwrap(),
             size: op.size.unwrap(),
             deleted: false,
+            chunked: false,
+            chunks: Vec::new(),
         }
     };
     if op.kind != "delete" {
@@ -614,8 +656,52 @@ async fn operation(
         if op.kind == "put" {
             file.hash = op.hash.clone().unwrap();
             file.size = op.size.unwrap();
+            file.chunked = op.chunked.unwrap_or(false);
+            file.chunks = if file.chunked {
+                op.chunks.clone().unwrap()
+            } else {
+                Vec::new()
+            };
+            if let Some(manifest) = &op.chunks {
+                let mut missing = Vec::new();
+                for chunk in manifest {
+                    match state.storage.objects.open(&chunk.hash) {
+                        Ok(object) if object.metadata()?.len() == chunk.size as u64 => {}
+                        Ok(_) => return Err(chunks::invalid_manifest()),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                            missing.push(chunk.hash.clone())
+                        }
+                        Err(_) => return Err(ApiError::storage()),
+                    }
+                }
+                if !missing.is_empty() {
+                    missing.sort();
+                    missing.dedup();
+                    let mut error = ApiError::new(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "MISSING_CHUNK",
+                        "Manifest references missing chunks",
+                    );
+                    error.missing_chunks = Some(missing);
+                    return Err(error);
+                }
+            }
         }
-        state.storage.verify(&file.hash, Some(file.size))?;
+        if op.kind == "put" && file.chunked {
+            let parts = file
+                .chunks
+                .iter()
+                .map(|c| (c.hash.clone(), c.size))
+                .collect::<Vec<_>>();
+            if !state
+                .storage
+                .verify_manifest(&file.hash, file.size, &parts)?
+            {
+                return Err(chunks::invalid_manifest());
+            }
+        } else {
+            chunks::verify_file(&state.storage, &file)?;
+        }
         // An old projection file can itself be a parent of the new path. Keep
         // it until metadata commits, then replace it with a directory below.
         let old_key = path::normalize(&file.path)?.1;
@@ -629,7 +715,7 @@ async fn operation(
     }
     file.revision = cursor.checked_add(1).ok_or_else(ApiError::storage)?;
     let key = path::normalize(&file.path)?.1;
-    sqlx::query("INSERT INTO files(id,path,path_key,revision,hash,size,deleted) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,path_key=EXCLUDED.path_key,revision=EXCLUDED.revision,hash=EXCLUDED.hash,size=EXCLUDED.size,deleted=EXCLUDED.deleted").bind(&file.id).bind(&file.path).bind(key).bind(file.revision).bind(&file.hash).bind(file.size).bind(file.deleted).execute(&mut *tx).await?;
+    sqlx::query("INSERT INTO files(id,path,path_key,revision,hash,size,deleted,chunked) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET path=EXCLUDED.path,path_key=EXCLUDED.path_key,revision=EXCLUDED.revision,hash=EXCLUDED.hash,size=EXCLUDED.size,deleted=EXCLUDED.deleted,chunked=EXCLUDED.chunked").bind(&file.id).bind(&file.path).bind(key).bind(file.revision).bind(&file.hash).bind(file.size).bind(file.deleted).bind(file.chunked).execute(&mut *tx).await?;
     let record = serde_json::to_value(&file).map_err(|_| ApiError::storage())?;
     let result = json!({"file":record,"cursor":file.revision});
     sqlx::query("INSERT INTO changes(revision,file_id,record) VALUES($1,$2,$3)")
@@ -638,6 +724,11 @@ async fn operation(
         .bind(&record)
         .execute(&mut *tx)
         .await?;
+    for (ordinal, chunk) in file.chunks.iter().enumerate() {
+        sqlx::query("INSERT INTO version_chunks(revision,ordinal,chunk_hash,chunk_size) VALUES($1,$2,$3,$4)")
+            .bind(file.revision).bind(ordinal as i32).bind(&chunk.hash).bind(chunk.size)
+            .execute(&mut *tx).await?;
+    }
     sqlx::query("INSERT INTO operations(id,identity,fingerprint,result) VALUES($1,$2,$3,$4)")
         .bind(&op.operation_id)
         .bind(&identity.id)
@@ -662,18 +753,20 @@ async fn operation(
         }
     }
     if !file.deleted {
-        state
-            .storage
-            .projection(&file.path, &file.hash, file.size)?
+        chunks::project_file(&state.storage, &file)?
     }
     Ok(Json(result))
 }
 async fn repair_file(state: &AppState, id: &str) -> Result<(), ApiError> {
-    let file =
-        sqlx::query_as::<_, FileRecord>(&format!("SELECT {FILE_COLUMNS} FROM files WHERE id=$1"))
-            .bind(id)
-            .fetch_optional(&state.pool)
-            .await?;
+    let file = sqlx::query_scalar::<_, Value>(
+        "SELECT c.record FROM files f JOIN changes c ON c.revision=f.revision WHERE f.id=$1",
+    )
+    .bind(id)
+    .fetch_optional(&state.pool)
+    .await?
+    .map(serde_json::from_value::<FileRecord>)
+    .transpose()
+    .map_err(|_| ApiError::storage())?;
     if let Some(file) = file {
         let active_paths = sqlx::query("SELECT id,path_key FROM files WHERE NOT deleted")
             .fetch_all(&state.pool)
@@ -714,9 +807,7 @@ async fn repair_file(state: &AppState, id: &str) -> Result<(), ApiError> {
             }
         }
         if !file.deleted {
-            state
-                .storage
-                .projection(&file.path, &file.hash, file.size)?
+            chunks::project_file(&state.storage, &file)?
         }
     }
     Ok(())

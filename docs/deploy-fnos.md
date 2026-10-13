@@ -30,7 +30,7 @@ sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 
 ### 1.4 库的数据目录
 
-`objects/`（不可变历史内容）、`vault/`（最新可读文件树）与 `tmp/`（上传临时文件）。`vault/` 只供查看和导出：直接修改不会同步给设备，并会在重启修复时丢弃。不要手动删除 `objects/`。历史版本暂不自动清理。数据库端口不对宿主机发布；一个数据目录只能被一个实例挂载。
+`objects/`（不可变历史内容）、`vault/`（最新可读文件树）与 `tmp/`（上传临时文件）。`vault/` 只供查看和导出：直接修改不会同步给设备，并会在重启修复时丢弃。不要手动删除 `objects/`。历史版本不自动清理。手动 GC 只回收超过宽限期的无引用对象，不删保留版本。数据库端口不对宿主机发布；一个数据目录只能被一个实例挂载。
 
 ### 1.5 首次启动可能较慢
 
@@ -44,7 +44,7 @@ sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 docker build --network=host -t mindsync:latest .
 ```
 
-`add-library.sh` 已内置该参数。
+`add-library.sh` 已内置该参数。发布构建默认单个 Cargo job，并使用 BuildKit registry/target 缓存；源码打包及 Docker context 排除 macOS 的 `._*` 附属文件，避免它们被误认作 SQL 迁移。
 
 ### 1.7 旧的单库方式（仍可用，推荐改用上面的库）
 
@@ -129,3 +129,35 @@ node scripts/devices.mjs revoke 从列表选出的设备ID
 ## 6. 目录大小写重命名
 
 例如 `Notes/` 改为 `notes/` 时，插件先把该目录内已同步文件的远端身份迁入唯一的 `MindSync Rename ...` 临时目录，全部确认后再迁入目标目录。文件身份不变，过程可恢复，但其他设备可能短暂看到临时目录。重命名期间其他设备在旧目录新建文件时会报告路径冲突并保留待同步计划；先解决新文件的目录归属再重试。不要手动删除临时目录来结束迁移。
+
+
+## 7. 协议 v2 升级与手动 GC
+
+v2 插件/服务端本地验收与 0.2.0 打包已完成，实机进展见 [验证记录](verification.md)。升级时先备份目标库，再用宿主网络构建服务端，同期更新客户端插件：
+
+```sh
+MINDSYNC_LIBRARY=notes sh scripts/backup.sh
+# 保留数据目录属主运行身份，构建必须使用宿主网络。
+docker build --network=host -t mindsync:latest .
+# 当前 compose 镜像名为 mindsync；部署更新须使用已构建的 tag。
+docker tag mindsync:latest mindsync
+docker compose -p mindsync --env-file libraries/notes.env up -d --no-build
+```
+
+轮询 `/health`，再确认 `/v1/info` 的 protocol 为 2。迁移只新增 version_chunks 与 files.chunked，不重写旧对象。重启会验证历史内容并重建投影，慢盘请留足时间。不要用旧插件读含多块的新库；新插件可连接 v1 服务器并回退整对象传输。
+
+以下命令从指定库配置读取管理凭据，不打印令牌：
+
+```sh
+set -a
+. ./libraries/notes.env
+set +a
+export MINDSYNC_URL=http://127.0.0.1:8080
+node scripts/gc.mjs
+# 预览 objects/bytes 后，自行决定是否实际回收：
+node scripts/gc.mjs --apply
+```
+
+只有 --apply 会删除；被任何保留版本引用的块和旧对象都不会回收，包括已删除文件的历史。默认宽限期 604800 秒（7 天）；可在相应库 env 加入 `MINDSYNC_GC_GRACE_SECONDS`，重新创建应用容器生效。续传协商与重试发布会刷新对象修改时间。不要用很短的宽限期来清理仍在上传的文件。
+
+v2 单块体积最多 256 KiB，元数据请求上限 1 MiB。兼容 v1 上传仍需要代理允许整文件请求，已有 50 MiB 代理上限可保留。

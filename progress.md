@@ -13,3 +13,33 @@ Eight real HTTP scenarios passed: notes, binary attachments, concurrent edits, r
 Empty-volume and note-containing backup restores passed. Restored file content, history, readable projection and rotated vault identity verified.
 
 Independent spec and quality reviews passed after corrections. Final client suite: 53 tests. Release packages verified without credentials, local data or build caches. Actual device/NAS/network acceptance remains separate.
+
+2026-10-13：开始阶段 1–3；读取交接、协议、迁移、服务端与插件实现。当前 feat/docker-sync 干净。设计授权由用户“开始干”提供，不重新讨论已决策项。
+用户新增低负载要求：立即停止尚在运行的基线任务，后续仅实施代码/文档与轻量静态检查，完整测试与部署延后。
+
+2026-10-13 低负载源码实施：新增 0002、服务端 chunks 模块、版本清单提交/投影、旧幂等指纹兼容、手动 GC（默认 dry_run）与宽限期刷新。插件新增 FastCDC、候选清单、missing 协商、三并发块传输/重试、整文件与块摘要校验、v1 回退和进度。新增未执行的 Rust/插件回归测试与 loopback HTTP 验收脚本。更新协议、部署、README/验证记录；源代码未发布，旧安装包未替换。
+已执行的低负载检查：rustfmt 解析/格式化，TypeScript createSourceFile 语法解析，gc.mjs node --check，git diff --check。没有运行编译、类型检查、测试、Docker、数据库、部署或 GC；运行验收保持 pending。
+最终轻量检查（本轮 v2 修改）：rustfmt --check exit 0；11 个 TypeScript 文件 AST 语法错误 0（不含语义类型检查）；node --check scripts/gc.mjs exit 0；git diff --check exit 0。所有修改保留在当前工作区，未提交/打包/部署。下一步清单见 docs/superpowers/plans/2026-10-13-chunks-low-load.md。
+
+继续验证：用户明确允许恢复编译与测试，要求限制并发。开始单 worker 插件测试（nice -n 10）；后续依序运行插件构建、单 job Rust 编译/检查和专用测试数据库，避免并行高负载。
+首轮单 worker 插件测试：72 通过、1 个 10 MiB 场景超时；通用 toEqual 对大 Uint8Array 的逐属性深比较耗时 23 秒、worker 内存约 2.9 GiB。已定位测试断言负载，改为 Node Buffer 的原生完整二进制比较（仅测试代码，无插件 Node 依赖），不提高 timeout、不削弱校验。尝试停止时进程已自然结束，无残留验证进程。
+插件续传组重跑 10/10 通过（4.49 秒，10 MiB 场景约 1.8 秒）；插件 tsc/esbuild 构建通过；Rust clippy all-targets -D warnings 通过。首轮 PostgreSQL 测试 13/15 通过，两项 restart 的测试路径未 canonicalize，macOS /var 是符号链接，触发原本 O_NOFOLLOW 防护；与已有 fixture 对照后只修两处测试配置，不放宽存储防护。
+本地完整验证：插件 73/73、服务端 15/15、插件构建、Rust all-targets clippy -D warnings 通过。真实 HTTP 原有 9 场景通过；v2 同内容重复上传零 PUT、10 MiB 模拟重启补传 1,950,374 bytes、合成三版本存储 2,520,212/6,291,456=0.4005769。NAS notes 已备份到 /vol1/1000/docker/mindsync/backups/pre-v2-20261013（空库，0 objects）；副本在本地 backups/pre-v2-nas-20261013，校验通过并在专用 mindsync_v1_restore 迁移 v1->v2 健康。
+0.2.0 版本号已更新；Dockerfile release 编译默认 CARGO_BUILD_JOBS=1。NAS 从 /tmp/mindsync-v2-20261013 构建 mindsync:v0.2.0（exec session 75429），未替换 notes 运行镜像。源包 Mac xattr 告警已定位，package.mjs 去 xattr/ACL/.DS_Store 待重新打包检查。
+新增 scripts/process-acceptance.ts：使用实际 ObsidianLocal 双槽代码 + 磁盘 headless Vault adapter 的进程 SIGKILL。实测确认上传 ACK 6,304,119 bytes，重启补传 4,026,105 bytes < 5 MiB；提交前强杀重启零重复 PUT；模拟 30 秒断网自动重试成功（36,878 ms）。仍不宣称真实 Obsidian UI/Android 验收。
+PDF fixture 用 reportlab 生成 2,690,787-byte 可读单页 PDF（无用户数据），pypdf 解析和渲染查看通过；PDF 三版本 HTTP 验收进行中。
+PDF 三版本真实 HTTP：2,890,946/8,072,460=0.358124537（有效单页生成 PDF，三版本仅改末尾注释）。GC HTTP 验收进一步将 PDF 隔离库所有对象设为 8 天前，再续期 pending：仅回收 61-byte 零引用块，逻辑大小不变、7 个历史版本仍可下载并校验。新版包 ZIP 精确匹配构建文件、源包不含 env/本地数据/缓存/Mac xattr，校验和通过。NAS 临时 fixture 网络/PG/目录准备中（session 56310），生产仍旧镜像未切换。
+测试 vault ~/Documents/MindSync 测试 的 main.js/manifest.json/styles.css 已升级至 0.2.0，内容逐字节匹配构建。原插件/配置/状态备份于 backups/obsidian-test-plugin-pre-v2-20261013（权限 700，包含令牌的配置仅在私有备份中，不进入源包）。data.json 与 state 槽未改。需要应用重载才能确认 UI 执行，新插件兼容仍在运行的 v1 服务。
+尝试原生 Obsidian UI 验收时，Computer Use 返回屏幕录制/辅助功能权限仍 pending；未获得界面状态、未执行 UI 操作、不绕过系统权限。继续无界面和 NAS 验收，真实 GUI 保持未验收。
+NAS 首轮单 job 构建失败（编译至应用宏）：最初旧源包携带 AppleDouble 的 server/migrations/._0001_initial.sql，SQLx 解析版本号失败。notes 服务未切换。当前重打包已验证迁移只有 0001/0002；额外补 Docker context **/._* 排除及 tar --exclude=._*。Dockerfile 增加 registry/target BuildKit cache mount（sharing=locked）并拷出 release 可执行文件，使后续构建可增量且仍单 job。准备第二次构建，不重试旧包。
+最终构建上下文检查补充：Dockerignore 同时排除 libraries/*.env 等实际凭据，只保留空 example 模板，避免日后从 NAS 完整项目目录重建时将库凭据送入构建上下文。第二轮临时构建目录本来只有空模板，当前构建未包含生产凭据。
+本地验证结束，已停止本任务创建的四个临时 Rust HTTP 服务与专用 PostgreSQL 容器，降低本机后台负载；保留测试数据/结果和私有备份供追溯。NAS release 构建和隔离 fixture 尚在继续；现有生产 notes 仍健康。
+NAS 第二轮单 job release 镜像构建成功（16m57s）；mindsync:v0.2.0 digest sha256:eff8f04cb5980774d4cdead95d071a3e859db31e7b19e2cf454685165914f3bc。实际原生 Linux 镜像已生成，AppleDouble 迁移错误消除。开始 /vol1/1000/libraries/.mindsync-v2-verification 隔离库 HTTP/GC 验收，生产 notes 仍旧版健康。
+NAS fixture 刚创建容器即访问时收到 ECONNRESET；定位为尚未就绪（无应用错误日志），21 秒后容器健康且 /health OK。确认 ready 后再开始 HTTP 验收，未更改服务器或客户端来掩盖首启窗口。
+更正 NAS ECONNRESET 根因：NAS 直连 localhost /health 正常，而 Mac 的 SSH -L 通道被 sshd 明确拒绝（administratively prohibited）。未修改 SSH 权限配置；停止失效隧道，改为在 NAS 本机执行 loopback 验收。之前“首启窗口”判断不能解释隧道拒绝，以此诊断为准。
+NAS 本机 Node v24.15.0 loopback HTTP v2 验收通过：2 MiB 二次上传零 PUT，10 MiB 模拟重启补传 1,950,374 bytes，提交前退出零重复 PUT；有效 PDF 三版本物理/逻辑 2,890,946/8,072,460=0.358124537。隔离服务 CPU limit 0.5、PG 0.25，本次 Node nice -n 10；生产 notes cursor 仍 0。
+NAS GC 在 dedicated fixture 上通过：将所有对象设为 8 天前、刷新 pending；dry-run/实收仅 1 个 61-byte 零引用对象，logical_bytes 不变，7 个历史版本完整校验且 pending 保留。未对生产 notes 执行 GC。
+NAS 原 HTTP 9 场景通过：笔记/附件、并发冲突、稳定身份/大小写目录重命名、删除冲突、响应丢失幂等恢复、历史恢复、设备撤销均通过。开始独立空库真实 SIGKILL/30 秒模拟断网验收。
+NAS 真实 SIGKILL/headless双槽恢复通过：ACK 6,304,119 bytes，重启补传 4,092,761 bytes < 5 MiB；提交前 SIGKILL 零重复 PUT；模拟 30 秒断网自动恢复 46,297ms，结果已下载至 nas-data/nas-process-acceptance.json。最终升级前备份 pre-v2-final-20261013 本地副本校验通过；旧镜像保留为 mindsync:pre-v2-20261013。生产 compose 已切换 v0.2.0，待健康/身份/游标核对。
+生产升级核对通过：/health ready，protocol 2、cursor 0、storage/logical 0、vault identity 保持一致，迁移 1/2 success，镜像 eff8f04cb598、uid/gid 1000:1001 healthy；原 Mac device token 仍有效。测试 vault 0.2.0 文件核对一致，需重载。最终插件 73 项再次单 worker 通过、build/clippy 通过；清理 NAS fixture 容器/network/data 进行中。
+收尾：NAS 专用 test 容器、network 和两处 fixture data 已清理；最终 0.2.0 ZIP 精确匹配构建文件，源包新迁移/代码/验收脚本/验证记录逐字节核对，凭据/缓存/本地数据/Finder/AppleDouble 排除，SHA-256 校验通过；fmt/JS syntax/diff whitespace 通过。NAS 项目源码与最终文档同步，临时 staging 清理，生产服务健康、notes.env 仍 600。阶段 1–3 开发与隔离验收完成；真实 UI/移动端硬件及阶段 4 仍待后续。

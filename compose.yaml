@@ -16,6 +16,7 @@ services:
       MINDSYNC_DATA: /data
       MINDSYNC_PORT: "8080"
       MINDSYNC_MAX_FILE_BYTES: ${MINDSYNC_MAX_FILE_BYTES:-52428800}
+      MINDSYNC_GC_GRACE_SECONDS: ${MINDSYNC_GC_GRACE_SECONDS:-604800}
       DATABASE_URL: postgresql://mindsync:${POSTGRES_PASSWORD:?Set a strong PostgreSQL password}@postgres:5432/mindsync
     ports:
       - "${MINDSYNC_BIND_ADDRESS:-127.0.0.1}:${MINDSYNC_PORT:-8080}:8080"

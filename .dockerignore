@@ -1,6 +1,8 @@
 .git
 .env
 .env.*
+**/*.env
+!libraries/example.env
 server/target
 plugin
 node_modules
@@ -9,3 +11,7 @@ backups
 *.tar.gz
 *.dump
 *.log
+
+# macOS AppleDouble and Finder metadata must never become SQL migrations.
+**/._*
+**/.DS_Store

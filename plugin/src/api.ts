@@ -19,6 +19,19 @@ export class Api implements Remote {
   changes(after: number, until?: number) { return this.request<Changes>('GET',`/v1/changes?after=${after}&limit=100${until === undefined ? '' : `&until=${until}`}`); }
   async upload(hash: string, bytes: Uint8Array) { await this.request('PUT',`/v1/objects/${hash}`,bytes); }
   download(hash: string) { return this.request<Uint8Array>('GET',`/v1/objects/${hash}`,undefined,true); }
+  missing(hashes: string[]) { return this.request<{missing:string[];present:number}>('POST','/v1/chunks/missing',{hashes}); }
+  private async retryChunk<T>(work: () => Promise<T>): Promise<T> {
+    for (let attempt=0;;attempt++) {
+      try { return await work(); }
+      catch (error) {
+        const retryable=!(error instanceof SyncError) || ['TIMEOUT','HTTP_408','HTTP_429','HTTP_500','HTTP_502','HTTP_503','HTTP_504','STORAGE_ERROR'].includes(error.code);
+        if (!retryable || attempt>=2) throw error;
+        await new Promise(resolve=>setTimeout(resolve,250*2**attempt));
+      }
+    }
+  }
+  async uploadChunk(hash: string, bytes: Uint8Array) { await this.retryChunk(()=>this.request('PUT',`/v1/chunks/${hash}`,bytes)); }
+  downloadChunk(hash: string) { return this.retryChunk(()=>this.request<Uint8Array>('GET',`/v1/chunks/${hash}`,undefined,true)); }
   apply(op: Operation) { return this.request<Result>('POST','/v1/operations',op); }
   async result(id: string) { try { return await this.request<Result>('GET',`/v1/operations/${encodeURIComponent(id)}`); } catch (e) { if (e instanceof SyncError && (e.code === 'NOT_FOUND' || e.code === 'HTTP_404')) return null; throw e; } }
   register(name: string) { return this.request<{id:string;name:string;token:string}>('POST','/v1/devices',{name}); }

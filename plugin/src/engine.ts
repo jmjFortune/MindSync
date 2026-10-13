@@ -1,10 +1,14 @@
-import {decode, digest, encode, FileRecord, Info, Local, Operation, Remote, SyncError, SyncState, validatePath, pathKey} from './types';
+import {chunk, validateParameters} from './chunker';
+import {Candidate, Chunk, decode, digest, encode, FileRecord, Info, Local, Operation, Remote, SyncError, SyncState, validatePath, pathKey} from './types';
+export interface TransferProgress { path: string; direction: 'upload' | 'download'; completed: number; total: number }
 export interface PlanItem { action: string; path: string }
 export class SyncEngine {
   private running = false;
   private failedOperations = new Set<string>();
   private infoValue?: Info;
   private remotePaths: string[] = [];
+  progress?: TransferProgress;
+  onProgress?: (progress?: TransferProgress) => void;
   constructor(public state: SyncState, private local: Local, private remote: Remote, private device = 'device') {}
   get info(): Info | undefined { return this.infoValue; }
   private async save() { await this.local.save(structuredClone(this.state)); }
@@ -29,11 +33,16 @@ export class SyncEngine {
   }
   private async checkInfo() {
     const info = await this.remote.info();
-    if (info.protocol !== 1) throw new SyncError('PROTOCOL_MISMATCH', '服务器协议不兼容');
+    if (![1,2].includes(info.protocol)) throw new SyncError('PROTOCOL_MISMATCH', '服务器协议不兼容');
     if (this.state.vaultId && this.state.vaultId !== info.vault_id) throw new SyncError('VAULT_MISMATCH', '服务器属于另一份笔记库，请在新的本地库连接，避免混合数据');
     const high = Object.values(this.state.files).reduce((high,f) => Math.max(high,f.revision), Math.max(this.state.cursor, this.state.remoteHighWatermark ?? 0));
     if (this.state.vaultId && info.cursor < high) throw new SyncError('SERVER_ROLLBACK', '服务器已恢复较早的备份。请保留当前本地库，在新的本地库连接后再预览导入后续修改');
     this.state.remoteHighWatermark = Math.max(high, info.cursor);
+    if (info.protocol === 2) {
+      if (info.chunk_algo !== 'fastcdc' || !this.remote.missing || !this.remote.uploadChunk || !this.remote.downloadChunk)
+        throw new SyncError('PROTOCOL_MISMATCH','服务器或客户端缺少分块支持');
+      validateParameters({min:info.chunk_min!,avg:info.chunk_avg!,max:info.chunk_max!});
+    }
     this.infoValue = info; return info;
   }
   async preview(): Promise<PlanItem[]> {
@@ -112,7 +121,7 @@ export class SyncEngine {
       await attempt(() => this.capture(errors)); await attempt(() => this.flush(errors));
       if (errors.length) throw errors[0];
       this.state.lastSuccess = new Date().toISOString(); await this.save();
-    } finally { this.running = false; }
+    } finally { this.running = false; this.setProgress(); }
   }
   async restore(fileId: string, version: FileRecord): Promise<void> {
     if (this.running) throw new SyncError('SYNC_BUSY', '同步进行中，请稍后恢复');
@@ -122,7 +131,7 @@ export class SyncEngine {
       const base = this.state.files[fileId];
       if (!base || version.id !== fileId || version.deleted) throw new SyncError('INVALID_VERSION', '无法恢复此历史版本');
       if (this.state.pending.some(c => c.op.file_id === fileId)) throw new SyncError('PENDING_OPERATION', '该文件还有待同步修改，请先同步后恢复');
-      const bytes = await this.remote.download(version.hash);
+      const bytes = await this.downloadFile(version);
       if (await digest(bytes) !== version.hash || bytes.length !== version.size) throw new SyncError('HASH_MISMATCH', '历史内容校验失败');
       const local = await this.local.read(base.path);
       if (local) await this.protect(base.path, local);
@@ -131,11 +140,16 @@ export class SyncEngine {
       const errors: unknown[] = [];
       await this.flush(errors, op.operation_id);
       if (errors.length) throw errors[0];
-    } finally { this.running = false; }
+    } finally { this.running = false; this.setProgress(); }
   }
   private async queue(op: Operation, bytes?: Uint8Array, restore = false) {
     if (bytes && this.infoValue && bytes.length > this.infoValue.max_file_bytes) throw new SyncError('FILE_TOO_LARGE', `附件超出服务器单文件上限：${op.path}`);
-    this.state.pending.push({op, content: bytes ? encode(bytes) : undefined, ...(restore ? {restore:true} : {})}); await this.save();
+    let chunks: Chunk[] | undefined;
+    if (bytes && this.infoValue?.protocol === 2) {
+      chunks = await chunk(bytes,{min:this.infoValue.chunk_min!,avg:this.infoValue.chunk_avg!,max:this.infoValue.chunk_max!});
+      if (chunks.length > 1) { op = {...op,chunked:true,chunks}; }
+    }
+    this.state.pending.push({op, content: bytes ? encode(bytes) : undefined, ...(chunks ? {chunks} : {}), ...(restore ? {restore:true} : {})}); await this.save();
   }
   private async capture(errors: unknown[]) {
     const paths = await this.local.list(); const present = new Set(paths); const handled = new Set<string>();
@@ -211,7 +225,7 @@ export class SyncEngine {
       try {
         let result = await this.remote.result(candidate.op.operation_id);
         if (!result) {
-          if (candidate.content !== undefined) await this.remote.upload(candidate.op.hash!, decode(candidate.content));
+          if (candidate.content !== undefined) await this.uploadCandidate(candidate);
           result = await this.remote.apply(candidate.op);
         }
         this.state.remoteHighWatermark = Math.max(this.state.remoteHighWatermark ?? 0, result.cursor);
@@ -241,6 +255,70 @@ export class SyncEngine {
         } else { this.failedOperations.add(candidate.op.operation_id); errors.push(error); }
       }
     }
+  }
+  private setProgress(progress?: TransferProgress) {
+    this.progress=progress; this.onProgress?.(progress);
+  }
+  private async uploadCandidate(candidate: Candidate) {
+    const bytes=decode(candidate.content!);
+    if (await digest(bytes) !== candidate.op.hash || bytes.length !== candidate.op.size)
+      throw new SyncError('STATE_CORRUPT','待上传候选内容校验失败');
+    if (!candidate.chunks) { await this.remote.upload(candidate.op.hash!,bytes); return; }
+    if (this.infoValue?.protocol !== 2 || !this.remote.missing || !this.remote.uploadChunk)
+      throw new SyncError('PROTOCOL_MISMATCH','待上传分块候选需要协议 v2 服务器');
+    if (!candidate.chunks.length || candidate.chunks.length>8192 || (!candidate.op.chunked && candidate.chunks.length!==1))
+      throw new SyncError('STATE_CORRUPT','待上传块清单无效');
+    // Never regenerate a pending manifest: it is part of the operation fingerprint.
+    const blocks = new Map<string,Uint8Array>(); let offset=0;
+    for (const part of candidate.chunks) {
+      if (!Number.isSafeInteger(part.size) || part.size<0 || offset+part.size>bytes.length || !/^[a-f0-9]{64}$/.test(part.hash))
+        throw new SyncError('STATE_CORRUPT','待上传块清单损坏');
+      const block=bytes.subarray(offset,offset+part.size);
+      if (await digest(block) !== part.hash) throw new SyncError('STATE_CORRUPT','待上传块校验失败');
+      blocks.set(part.hash,block); offset+=part.size;
+    }
+    if (offset!==bytes.length || (candidate.op.chunked && JSON.stringify(candidate.op.chunks)!==JSON.stringify(candidate.chunks)))
+      throw new SyncError('STATE_CORRUPT','待上传块清单不完整');
+    const reply=await this.remote.missing([...blocks.keys()]);
+    if (!Array.isArray(reply.missing) || reply.missing.some(h=>!blocks.has(h)) || new Set(reply.missing).size!==reply.missing.length || reply.present!==blocks.size-reply.missing.length)
+      throw new SyncError('INVALID_RESPONSE','服务器返回无效的缺失块列表');
+    let completed=blocks.size-reply.missing.length;
+    const report=()=>this.setProgress({path:candidate.op.path??candidate.op.file_id,direction:'upload',completed,total:blocks.size});
+    report();
+    // Three workers; await every worker before returning even when one fails,
+    // keeping connection isolation until all requests have settled.
+    let index=0, failure: unknown;
+    const worker=async()=>{
+      while (index<reply.missing.length && failure===undefined) {
+        const hash=reply.missing[index++];
+        try { await this.remote.uploadChunk!(hash,blocks.get(hash)!); completed++; report(); }
+        catch (error) { failure=error; }
+      }
+    };
+    await Promise.all(Array.from({length:Math.min(3,reply.missing.length)},worker));
+    if (failure!==undefined) throw failure;
+  }
+  private async downloadFile(file: FileRecord): Promise<Uint8Array> {
+    if (!file.chunked) return this.remote.download(file.hash);
+    if (!this.remote.downloadChunk || !file.chunks?.length || file.chunks.length>8192 || !Number.isSafeInteger(file.size) || file.size<0 || file.size>(this.infoValue?.max_file_bytes??52428800))
+      throw new SyncError('INVALID_MANIFEST','远端块清单或文件大小无效');
+    let total=0;
+    for (const part of file.chunks) {
+      if (!Number.isSafeInteger(part.size) || part.size<=0 || part.size>(this.infoValue?.chunk_max??262144) || !/^[a-f0-9]{64}$/.test(part.hash))
+        throw new SyncError('INVALID_MANIFEST','远端块清单无效');
+      total+=part.size;
+    }
+    if (total!==file.size) throw new SyncError('INVALID_MANIFEST','远端块清单总大小不匹配');
+    const bytes=new Uint8Array(file.size); let offset=0,completed=0;
+    for (const part of file.chunks) {
+      this.setProgress({path:file.path,direction:'download',completed,total:file.chunks.length});
+      const block=await this.remote.downloadChunk(part.hash);
+      if (block.length!==part.size || await digest(block)!==part.hash) throw new SyncError('HASH_MISMATCH','远端块内容校验失败');
+      bytes.set(block,offset); offset+=block.length; completed++;
+    }
+    if (await digest(bytes)!==file.hash) throw new SyncError('HASH_MISMATCH','远端整文件校验失败');
+    this.setProgress({path:file.path,direction:'download',completed,total:file.chunks.length});
+    return bytes;
   }
   private async protect(path: string, bytes: Uint8Array) {
     const hash = await digest(bytes); const slash = path.lastIndexOf('/'); const dot = path.lastIndexOf('.');
@@ -282,7 +360,7 @@ export class SyncEngine {
     if (file.deleted && owner) { this.state.files[file.id] = incoming; await this.save(); return; }
     let bytes: Uint8Array | null = null;
     if (!file.deleted) {
-      bytes = await this.remote.download(file.hash);
+      bytes = await this.downloadFile(file);
       if (await digest(bytes) !== file.hash || bytes.length !== file.size) throw new SyncError('HASH_MISMATCH', `远端内容校验失败：${file.path}`);
     }
     if (base && base.path !== file.path && !base.deleted) {

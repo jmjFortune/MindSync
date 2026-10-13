@@ -37,3 +37,76 @@ Client regression coverage includes initial nonempty library preview, snapshot t
 - Storage capacity under real note and attachment load (only an empty library has run so far).
 
 Memory clients and mocked Obsidian APIs verify the synchronization state machine and failure recovery. They do not establish real-device compatibility.
+
+# Protocol v2 verification — 2026-10-13
+
+The user initially requested low load while sleeping, then explicitly permitted verification with limited concurrency. Plugin tests ran with one worker and Rust with CARGO_BUILD_JOBS=1 under nice; PostgreSQL used an isolated loopback test container. Production data was never used by schema-reset tests.
+
+## Verified locally
+
+- Plugin Vitest: 73 passed. Large-buffer assertions use native binary equality, avoiding costly generic deep comparison; the 10 MiB restart case runs in about 1.8 seconds.
+- Plugin TypeScript check and esbuild bundle: passed, version 0.2.0.
+- Dedicated PostgreSQL API suite: 15 passed, including missing-chunk transaction rollback, ordered manifests, rename/delete references, startup projection rebuild, history restore, reconstructed v1 schema/ledger upgrade and concurrent upload/GC.
+- Rust build, all-targets clippy with warnings denied and rustfmt check: passed.
+- Original real HTTP integration: 9 scenario groups passed, covering note/binary transfer, conflict copies, renames including directory casing, delete/edit conflict, committed response loss, historical restore and token revocation.
+- Real HTTP v2: identical 2 MiB content at a second file identity generated zero additional chunk PUT requests; downloaded SHA-256 matched. A 10 MiB simulated restart resumed 1,950,374 bytes. Exit before commit resumed with zero repeated PUTs.
+- Genuine SIGKILL acceptance with actual ObsidianLocal checksum-protected state slots and a disk-backed headless Vault adapter: 6,304,119 bytes acknowledged before termination, 4,026,105 bytes resumed (< 5 MiB). The small difference from total size represents in-flight chunks persisted without client acknowledgement. SHA-256 matched after restart; terminating before commit led to zero additional PUTs. A simulated 30-second transport outage recovered automatically after 36,878 ms.
+- Synthetic binary three-version fixture: physical increment 2,520,212 bytes / logical increment 6,291,456 bytes = 0.4005769.
+- Valid deterministic PDF fixture (2,690,787 bytes, one readable/rendered page) with three trailing-comment versions: physical increment 2,890,946 bytes / logical increment 8,072,460 bytes = 0.3581245. This is a generated fixture, not a claim about all PDFs or compressed incremental edits.
+- Manual GC HTTP verification on disposable data: dry-run preserved objects; actual collection reclaimed one 61-byte unreferenced object; logical bytes unchanged; pending object preserved after grace renewal. All object timestamps were aged in the PDF fixture library to exercise reference retention; all 7 nondeleted historical versions remained hash-verifiable afterward.
+- Original fnOS notes backup downloaded, checksum verified and restored into a separate local database; v1 schema migrated to v2 and service health passed. The current production notes backup is empty (0 objects); nonempty legacy object/history compatibility is separately covered by the v1 migration integration scenario.
+- Plugin ZIP contains exactly main.js, manifest.json, styles.css and matches built files. Source archive excludes credentials, local data, build caches, Finder metadata and Mac extended attributes. Archive SHA-256 checksums verified.
+
+The SIGKILL/outage fixture executes the real journal and sync engine but substitutes a headless disk Vault adapter and a test retry loop. It does not establish actual Obsidian UI lifecycle, Android requestUrl behavior, application suspension or hardware acceptance.
+
+## Reproduce using disposable libraries
+
+Rust fixtures drop the database public schema; never point them at a production database. Run one test/compiler worker to limit load:
+
+```sh
+TEST_DATABASE_URL=postgres://postgres@127.0.0.1:55432/mindsync_test CARGO_BUILD_JOBS=1 cargo test --manifest-path server/Cargo.toml --locked -- --test-threads=1
+npm test --prefix plugin -- --maxWorkers=1 --no-file-parallelism
+npm run build --prefix plugin
+CARGO_BUILD_JOBS=1 cargo clippy --manifest-path server/Cargo.toml --locked --all-targets -- -D warnings
+cargo fmt --manifest-path server/Cargo.toml -- --check
+```
+
+Start fresh disposable loopback v2 services, set their MINDSYNC_TEST_URL and MINDSYNC_ADMIN_TOKEN privately, then use:
+
+```sh
+npm exec --prefix plugin -- esbuild scripts/chunk-acceptance.ts --bundle --platform=node --format=esm --outfile=plugin/dist/chunk-acceptance.mjs
+node plugin/dist/chunk-acceptance.mjs
+# To measure the PDF case, create a valid deterministic fixture (reportlab/Pillow):
+python3 scripts/make-test-pdf.py
+# Set MINDSYNC_TEST_PDF=/absolute/path/to/nas-data/dedup-fixture.pdf, use another fresh library.
+node plugin/dist/chunk-acceptance.mjs
+
+npm exec --prefix plugin -- esbuild scripts/process-acceptance.ts --bundle --platform=node --format=esm --alias:obsidian=./scripts/obsidian-test-runtime.mjs --outfile=plugin/dist/process-acceptance.mjs
+# Use another fresh library; subprocesses really receive SIGKILL.
+node plugin/dist/process-acceptance.mjs
+
+npm exec --prefix plugin -- esbuild scripts/gc-acceptance.ts --bundle --platform=node --format=esm --outfile=plugin/dist/gc-acceptance.mjs
+# Set MINDSYNC_TEST_DATA to the corresponding local nas-data fixture directory.
+node plugin/dist/gc-acceptance.mjs
+```
+
+GC acceptance ages objects and performs collection, and is deliberately restricted to fixture data. Do not point it at notes or other user libraries. The three transfer/kill fixtures require a fresh empty service; original integration may run afterwards. Packaging: `node scripts/package.mjs`.
+
+## fnOS v2 status
+
+Release image `mindsync:v0.2.0` built successfully on the NAS with one Cargo job and host networking (16m57s). The first build failed because an older Mac archive contained an AppleDouble SQL sidecar; clean tar packaging and Docker context exclusions fixed this. Image digest: `sha256:eff8f04cb5980774d4cdead95d071a3e859db31e7b19e2cf454685165914f3bc`.
+
+Dedicated NAS loopback HTTP acceptance ran with Node v24.15.0, nice priority, an application CPU limit of 0.5 and PostgreSQL limit of 0.25. SSH port forwarding was denied by sshd, so tests ran on the NAS itself without changing SSH settings.
+
+- Identical 2 MiB upload: zero additional PUTs; hash round trip passed.
+- 10 MiB memory-client restart: 1,950,374 bytes resumed; before-commit restart: zero repeated PUTs.
+- Valid PDF three-version physical/logical ratio: 2,890,946 / 8,072,460 = 0.358124537.
+- All 9 original HTTP scenario groups passed, including concurrent conflict copies, directory casing rename, committed response loss, history restoration and device revocation.
+- Manual GC on fixture data with all objects aged eight days reclaimed only one 61-byte orphan. Logical bytes stayed unchanged, all 7 historical versions remained readable and pending blocks stayed present after grace renewal.
+- Genuine process SIGKILL/headless journal recovery: 6,304,119 acknowledged bytes; 4,092,761 resumed bytes (< 5 MiB); before-commit restart caused zero PUTs. A simulated 30-second outage recovered automatically after 46,297 ms.
+
+Production notes was healthy with cursor 0 before upgrade. Upgrade-before backup is at `/vol1/1000/docker/mindsync/backups/pre-v2-20261013`; an additional final backup is at `/vol1/1000/docker/mindsync/backups/pre-v2-final-20261013`, with its local copy checksum-verified. The previous image is retained as `mindsync:pre-v2-20261013`. Production notes is running the verified 0.2.0 image as uid/gid 1000:1001 and is healthy. `/v1/info` reports protocol 2 with the same vault identity, cursor 0 and storage size 0 as before upgrade; migrations 0001 and 0002 both succeeded. The existing Mac device token still authenticates. No GC has been run against production, and no LiveSync data or deployment is touched. Dedicated NAS test containers, network and data directories were removed after acceptance. The macOS test vault plugin files match version 0.2.0; configuration and journal slots were retained, and the application needs a plugin reload.
+
+## Remaining hardware checks and limits
+
+Real Obsidian lifecycle/foreground behavior on macOS/Windows/Android, mobile requestUrl and storage memory under real attachments still require hardware acceptance. Manual GC never deletes retained history; it only reclaims unreferenced objects after the grace period. The plugin retains complete-file Vault reads, Web Crypto hashes, base64 journal candidates and complete-file replacement, so the default 50 MiB limit remains. Whole-file streaming and read caching belong to optional phase 4.

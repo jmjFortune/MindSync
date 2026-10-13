@@ -1,7 +1,8 @@
-export interface FileRecord { id: string; path: string; revision: number; hash: string; size: number; deleted: boolean }
-export interface Operation { operation_id: string; kind: 'put' | 'rename' | 'delete'; file_id: string; path?: string; base_revision: number; hash?: string; size?: number }
+export interface Chunk { hash: string; size: number }
+export interface FileRecord { id: string; path: string; revision: number; hash: string; size: number; deleted: boolean; chunked?: boolean; chunks?: Chunk[] }
+export interface Operation { operation_id: string; kind: 'put' | 'rename' | 'delete'; file_id: string; path?: string; base_revision: number; hash?: string; size?: number; chunked?: boolean; chunks?: Chunk[] }
 export interface Result { file: FileRecord; cursor: number }
-export interface Info { protocol: number; vault_id: string; max_file_bytes: number; cursor: number; storage_bytes: number }
+export interface Info { protocol: number; vault_id: string; max_file_bytes: number; cursor: number; storage_bytes: number; logical_bytes?: number; chunk_algo?: string; chunk_min?: number; chunk_avg?: number; chunk_max?: number }
 export interface Snapshot { files: FileRecord[]; cursor: number }
 export interface Changes { changes: FileRecord[]; cursor: number; until: number; has_more: boolean }
 export interface Remote {
@@ -9,6 +10,9 @@ export interface Remote {
   changes(after: number, until?: number): Promise<Changes>;
   upload(hash: string, bytes: Uint8Array): Promise<void>;
   download(hash: string): Promise<Uint8Array>;
+  missing?(hashes: string[]): Promise<{missing:string[];present:number}>;
+  uploadChunk?(hash: string, bytes: Uint8Array): Promise<void>;
+  downloadChunk?(hash: string): Promise<Uint8Array>;
   apply(op: Operation): Promise<Result>;
   result(id: string): Promise<Result | null>;
 }
@@ -20,7 +24,7 @@ export interface Local {
   create(path: string, bytes: Uint8Array): Promise<void>;
   save(state: SyncState): Promise<void>;
 }
-export interface Candidate { op: Operation; content?: string; restore?: boolean }
+export interface Candidate { op: Operation; content?: string; chunks?: Chunk[]; restore?: boolean }
 export interface SyncState {
   version: 1; vaultId?: string; remoteHighWatermark?: number; initialMergeApproved?: boolean; initialized: boolean; cursor: number;
   files: Record<string, FileRecord>; pending: Candidate[];
