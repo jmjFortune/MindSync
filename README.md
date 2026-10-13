@@ -10,10 +10,10 @@ Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不�
 
 ## 部署与安装
 
-完整步骤见 [飞牛部署说明](docs/deploy-fnos.md)。服务按**库**组织：一个库 = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。笔记与文献附件是各自独立的库，互不影响；以后新增来源也只是再加一个库。
+完整步骤见 [飞牛部署说明](docs/deploy-fnos.md)。服务按**库**组织：一个库 = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。各库独立保存数据。目前已接入 Obsidian，库名为 obsidian；Zotero 客户端尚未实现，下方命令只展示如何部署独立文献库服务。
 
 ```sh
-sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
+sh scripts/add-library.sh obsidian 8080 /vol1/1000/libraries/obsidian
 ```
 
 脚本会提示输入该库的管理令牌与 PostgreSQL 密码（只在你自己的终端里输入，不随机生成、不打印），随后建目录、构建镜像、启动并等待 `/health`。再加一个库：
@@ -81,7 +81,7 @@ node scripts/gc.mjs         # 只预览
 node scripts/gc.mjs --apply # 删除超过默认 7 天宽限期且没有任何版本引用的对象
 ```
 
-v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 已通过本地与 NAS 隔离验收，现有 NAS notes 服务已升级；具体证据与硬件验收边界见[验证记录](docs/verification.md)。
+v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 已通过本地与 NAS 隔离验收，现有 NAS Obsidian 库服务已升级；具体证据与硬件验收边界见[验证记录](docs/verification.md)。
 
 ## 扩展
 

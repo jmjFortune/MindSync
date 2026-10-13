@@ -6,7 +6,7 @@
 # Usage:
 #   sh scripts/add-library.sh <name> <port> <data-dir>
 # Examples:
-#   sh scripts/add-library.sh notes  8080 /vol1/1000/libraries/notes
+#   sh scripts/add-library.sh obsidian  8080 /vol1/1000/libraries/obsidian
 #   sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 #
 # Enter the library admin token and PostgreSQL password in your own terminal.
@@ -26,13 +26,13 @@ usage() {
     cat >&2 <<'TXT'
 Usage: sh scripts/add-library.sh <name> <port> <data-dir> [--no-start]
 
-  name        Lowercase letters, digits, and hyphens; e.g. notes / zotero
+  name        Lowercase letters, digits, and hyphens; e.g. obsidian / zotero
   port        Unique host port for this library; e.g. 8080 / 8081
   data-dir    Absolute path to a dedicated data directory; vault/ is the readable file tree.
   --no-start  Prepare directories and credentials without starting, for backup restoration.
 
 Examples:
-  sh scripts/add-library.sh notes  8080 /vol1/1000/libraries/notes
+  sh scripts/add-library.sh obsidian  8080 /vol1/1000/libraries/obsidian
   sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 TXT
     exit 1

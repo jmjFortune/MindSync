@@ -2,7 +2,7 @@
 
 ## 1. 部署一个库
 
-一个**库** = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。笔记库和文献附件库是两个库，互不影响；以后新增来源也只是再加一个库。需要飞牛上可用的 Docker 与 Docker Compose v2。
+一个**库** = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。不同来源可使用独立库。目前已接入 Obsidian（库名 obsidian）；Zotero 客户端尚未实现，部署示例不会自动上传 Zotero 文献。需要飞牛上可用的 Docker 与 Docker Compose v2。
 
 ### 1.1 准备源码
 
@@ -11,10 +11,10 @@
 ### 1.2 新建第一个库
 
 ```sh
-sh scripts/add-library.sh notes 8080 /vol1/1000/libraries/notes
+sh scripts/add-library.sh obsidian 8080 /vol1/1000/libraries/obsidian
 ```
 
-脚本会提示输入该库的**管理令牌**（至少 32 位）与 **PostgreSQL 密码**：只在你自己的终端里输入，不回显、不打印、不随机生成。随后它完成：创建数据目录 → 生成 `libraries/notes.env`（权限 600）→ 首次构建镜像 → 启动 → 自行轮询 `/health` 直至就绪。
+脚本会提示输入该库的**管理令牌**（至少 32 位）与 **PostgreSQL 密码**：只在你自己的终端里输入，不回显、不打印、不随机生成。随后它完成：创建数据目录 → 生成 `libraries/obsidian.env`（权限 600）→ 首次构建镜像 → 启动 → 自行轮询 `/health` 直至就绪。
 
 **命名规则**：第一个库使用干净名字 —— compose 项目 `mindsync`、容器 `mindsync` 与 `postgres`；之后新增的库自动加后缀（项目 `mindsync-<库名>`、容器 `mindsync-<库名>` 与 `postgres-<库名>`），因为容器名在宿主机上必须唯一。名称写在 `libraries/<库名>.env` 的 `MINDSYNC_PROJECT` / `MINDSYNC_CONTAINER_NAME` / `MINDSYNC_POSTGRES_CONTAINER_NAME` 里，可手工覆盖。
 
@@ -86,10 +86,10 @@ Docker 不会自动建立外网入口。先验收局域网，再选择自己的 
 sh scripts/backup.sh
 
 # 指定库：用该库的名字，备份前请确认库名正确
-MINDSYNC_LIBRARY=notes sh scripts/backup.sh
+MINDSYNC_LIBRARY=obsidian sh scripts/backup.sh
 
 # 或指定一个全新的备份目录
-MINDSYNC_LIBRARY=notes sh scripts/backup.sh /实际备份路径/2026-10-12
+MINDSYNC_LIBRARY=obsidian sh scripts/backup.sh /实际备份路径/2026-10-12
 ```
 
 > 不设置 `MINDSYNC_LIBRARY` 时脚本使用默认 compose 项目（兼容旧的单库方式）。多库部署下**务必**带上库名，否则会备份错库。
@@ -99,8 +99,8 @@ MINDSYNC_LIBRARY=notes sh scripts/backup.sh /实际备份路径/2026-10-12
 恢复到**全新的库和空数据目录**，禁止覆盖已有库。先准备目标库（`--no-start` 只建目录与凭据、不启动）：
 
 ```sh
-sh scripts/add-library.sh notes-restored 8081 /vol1/1000/libraries/notes-restored --no-start
-MINDSYNC_LIBRARY=notes-restored sh scripts/restore.sh /实际备份目录
+sh scripts/add-library.sh obsidian-restored 8081 /vol1/1000/libraries/obsidian-restored --no-start
+MINDSYNC_LIBRARY=obsidian-restored sh scripts/restore.sh /实际备份目录
 ```
 
 旧单库方式仍可用：`COMPOSE_PROJECT_NAME=mindsync-restored MINDSYNC_PORT=8081 sh scripts/restore.sh /实际备份目录`。管理令牌可重新生成；原设备令牌的哈希在数据库备份中，因此恢复后原设备令牌仍然有效。
@@ -113,13 +113,13 @@ MINDSYNC_LIBRARY=notes-restored sh scripts/restore.sh /实际备份目录
 
 设备丢失时用管理令牌调用 `GET /v1/devices`，找到设备 ID，再调用 `DELETE /v1/devices/{id}`；见[协议](protocol.md)。撤销即时拒绝该设备后续请求。管理令牌泄露时更改该库的 `libraries/<库名>.env` 并重建容器；已注册设备令牌仍可使用，必要时逐个撤销。
 
-故障定位先看 `docker compose -p mindsync --env-file libraries/notes.env ps` 与 `... logs --tail 100 mindsync`（把 `mindsync` 与 `libraries/notes.env` 换成该库的项目名与 env）。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
+故障定位先看 `docker compose -p mindsync --env-file libraries/obsidian.env ps` 与 `... logs --tail 100 mindsync`（把 `mindsync` 与 `libraries/obsidian.env` 换成该库的项目名与 env）。对象缺失、校验失败或数据库不可用时服务应明确报错；不要删除客户端状态文件来“修复”，这会失去删除和离线队列基线。恢复插件目录备份，或者创建新的本地库重新连接。
 
 装有 Node.js 的管理电脑也可使用辅助脚本。通过环境变量读取凭证，脚本不打印令牌：
 
 ```sh
 set -a
-. ./libraries/notes.env
+. ./libraries/obsidian.env
 set +a
 export MINDSYNC_URL=http://NAS局域网IP:8080
 node scripts/devices.mjs list
@@ -136,12 +136,12 @@ node scripts/devices.mjs revoke 从列表选出的设备ID
 v2 插件/服务端本地验收与 0.2.0 打包已完成，实机进展见 [验证记录](verification.md)。升级时先备份目标库，再用宿主网络构建服务端，同期更新客户端插件：
 
 ```sh
-MINDSYNC_LIBRARY=notes sh scripts/backup.sh
+MINDSYNC_LIBRARY=obsidian sh scripts/backup.sh
 # 保留数据目录属主运行身份，构建必须使用宿主网络。
 docker build --network=host -t mindsync:latest .
 # 当前 compose 镜像名为 mindsync；部署更新须使用已构建的 tag。
 docker tag mindsync:latest mindsync
-docker compose -p mindsync --env-file libraries/notes.env up -d --no-build
+docker compose -p mindsync --env-file libraries/obsidian.env up -d --no-build
 ```
 
 轮询 `/health`，再确认 `/v1/info` 的 protocol 为 2。迁移只新增 version_chunks 与 files.chunked，不重写旧对象。重启会验证历史内容并重建投影，慢盘请留足时间。不要用旧插件读含多块的新库；新插件可连接 v1 服务器并回退整对象传输。
@@ -150,7 +150,7 @@ docker compose -p mindsync --env-file libraries/notes.env up -d --no-build
 
 ```sh
 set -a
-. ./libraries/notes.env
+. ./libraries/obsidian.env
 set +a
 export MINDSYNC_URL=http://127.0.0.1:8080
 node scripts/gc.mjs
@@ -171,3 +171,9 @@ v2 单块体积最多 256 KiB，元数据请求上限 1 MiB。兼容 v1 上传�
 本机恢复目录为 `<configDir>/plugins/mindsync/configuration-sync/`，包含双槽日志、待应用内容、backups 与 conflicts。不要删除此目录来绕过回退或损坏错误。笔记日志独立保留。配置更新每 30 秒前台检查，自动同步暂停同时影响配置检查，手动预览/应用仍可用。未完成的插件/主题包会等待来源端续传；配置差异保留本地副本并提供 Keep local / Use remote。
 
 配置默认关闭；首次选择发布或接收前不上传。本机缺少可选包文件会保留远端文件，不自动传播插件卸载。无端到端加密，跨外网继续使用 HTTPS。桌面/Android 的实际配置加载时机需实机验证。
+
+## 已部署 Obsidian 库改名（2026-10-13）
+
+用户要求将库名 notes 改为 obsidian。现 NAS 数据根目录为 /vol1/1000/libraries/obsidian，可读笔记位于其 vault/ 下；配置文件为项目中的 libraries/obsidian.env，MINDSYNC_LIBRARY=obsidian。Compose 项目 mindsync、服务容器 mindsync/postgres、数据库、镜像、端口 8080 和设备令牌保留。Obsidian 插件无需修改连接地址或重载。
+
+切换先停止应用写入，保留私有原配置与元数据，再原地改名整个目录、更新标记和挂载，启动后验证。不可变 objects 未复制或删除。失败检查会恢复原挂载。飞牛创建文件/目录时可能忽略 mode 参数并继承 755；包含凭据的配置必须显式 chmod 600，私有备份目录 chmod 700，再检查实际权限。
