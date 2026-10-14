@@ -63,4 +63,5 @@ Delivery complete: 109 client tests/build passed, both installations preserve se
 - Native view, local notifications, existing action delegation and lifecycle: complete.
 - Regression/build: 125 client tests passed with one worker; TypeScript/esbuild and English/scoped-style audits passed.
 - Both local vaults installed 0.3.3 with byte-identical credentials/settings/journals and private backups. Actual native UI permission remains unavailable; plugin reload and visual confirmation remain user-side.
-- Package audit and authorized GitHub delivery: in progress.
+- Package contents, dependency lockfile preservation, credentials/cache exclusions and SHA-256: verified.
+- GitHub main source commit 219a12b and v0.3.3 release published. All six remote asset digests match local files; both installed plugin trios match the published build. Delivery complete; user-side reload/visual confirmation remains explicit.
