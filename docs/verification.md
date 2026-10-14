@@ -165,3 +165,11 @@ User explicitly requested the existing notes library be named obsidian. Actual d
 Before starting the renamed service, complete file/history/operation/device metadata digests matched and the immutable objects directory retained its inode. Post-start metadata matched exactly: revision 24 and 24 file records, same library identity/history/operation ledger/device hashes. Both installed vaults authenticated using their original URL/token. Production health is healthy; new environment file is mode 600; old directory/environment file are absent.
 
 Initial permission verification failed because fnOS ignored Node creation mode and inherited 755; the recovery guard restored the original directory/mount. A nonsecret isolated file reproduced creation as 755, and explicit chmod set it to 600. Final retry explicitly sets/checks private directory/file modes before stopping the service and succeeded. Private original configuration and metadata checkpoints remain in backups/pre-rename-notes-to-obsidian-20261013-final (directory mode 700). No real file contents or credentials were printed.
+
+# Plugin 0.3.1 status bar removal — 2026-10-14
+
+User requested removal of MindSync's bottom status bar entry. Removed registration, element, renderer and renderer calls. Existing command palette status/conflict access, live progress within the status modal, ribbon action, settings tab and synchronization state remain.
+
+Single-worker plugin regression suite: 99 passed. TypeScript/esbuild build passed. Source and compiled bundle no longer register a status bar item. Main/test vault installations match the 0.3.1 build; all prior settings/credentials/journals were verified byte-identical. Private pre-update backups remain under backups/obsidian-main-plugin-pre-0.3.1-20261014 and backups/obsidian-test-plugin-pre-0.3.1-20261014.
+
+Computer Use still reports permissions are not granted. No actual plugin reload or visual disappearance was observed; reload Obsidian or toggle MindSync off/on to activate the installed build. Rust/NAS runtime remains 0.3.0 and requires no restart.

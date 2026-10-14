@@ -72,7 +72,7 @@ node scripts/package.mjs
 
 ## 分块与手动回收
 
-协议 v2 默认 FastCDC 16/64/256 KiB，64 KiB 以下单块。客户端保存不可变候选和清单，恢复后只上传服务器缺失的块；已经提交的操作先从幂等台账确认。单块请求 30 秒超时，最多 3 个块并行，状态栏可查看进度。插件仍使用整文件 Vault 读写，单文件默认 50 MiB。
+协议 v2 默认 FastCDC 16/64/256 KiB，64 KiB 以下单块。客户端保存不可变候选和清单，恢复后只上传服务器缺失的块；已经提交的操作先从幂等台账确认。单块请求 30 秒超时，最多 3 个块并行，可从命令面板打开 MindSync: View status and conflicts 查看进度。插件仍使用整文件 Vault 读写，单文件默认 50 MiB。
 
 GC 仅供管理端手动触发，默认预览。按部署说明载入相应库凭据，并设置 `MINDSYNC_URL` 后：
 
@@ -88,3 +88,5 @@ v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 �
 [协议](docs/protocol.md)使用文件身份、版本、对象哈希和变更游标，独立于存储位置。服务端内容存储接口预留后续 WebDAV、S3 和网盘实现；仍由 NAS 管理版本一致性。RAG 可通过快照、分页变更和对象下载 API 建立自己的索引，暂未实现索引器或专用 RAG 身份。
 
 [设计](docs/superpowers/specs/2026-10-12-mindsync-design.md)与[验证记录](docs/verification.md)说明约束及已完成的测试。真实飞牛、Windows、Android 实机和外网通道需要进一步验收。
+
+0.3.1 起不在 Obsidian 底部状态栏添加 MindSync 项。同步入口保留在侧边栏图标、命令面板和 MindSync 设置；状态与冲突通过命令面板的 View status and conflicts 查看。更新插件后重载即可生效。

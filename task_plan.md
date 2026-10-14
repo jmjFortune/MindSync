@@ -41,3 +41,7 @@ User requests Obsidian settings and plugin sync; conflict behavior stays unchang
 - Write concrete scope/compatibility/import/recovery/acceptance design: complete; docs/superpowers/specs/2026-10-13-configuration-sync-design.md.
 - User approved the design with "start". Implementation proceeds sequentially in the existing feature checkout; production settings remain untouched.
 - Implementation plan saved at docs/superpowers/plans/2026-10-13-configuration-sync.md; backend/client/UI implementation and local verification complete (99 plugin, 18 server, real HTTP and SIGKILL recovery). NAS single-job image build, isolated acceptance, pre-upgrade backup/local checksum verification, production deployment and both vault installations complete. Final ZIP/source content, credentials/language/checksum audits and disposable resource cleanup complete; actual GUI/Android acceptance remains separate.
+
+## Remove status bar entry — 2026-10-14
+
+User explicitly requests that MindSync not add an item to Obsidian's bottom status bar. Remove registration/rendering, preserve native sidebar/command/settings entry points and status state. Patch plugin to 0.3.1; server remains 0.3.0. Verify single-worker regression/build, install with private backup and byte-identical user settings/journals, then publish source/assets to the existing authorized GitHub repository. Runtime UI reload depends on macOS access.
