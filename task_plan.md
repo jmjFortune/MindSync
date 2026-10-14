@@ -45,3 +45,6 @@ User requests Obsidian settings and plugin sync; conflict behavior stays unchang
 ## Remove status bar entry — 2026-10-14
 
 User explicitly requests that MindSync not add an item to Obsidian's bottom status bar. Remove registration/rendering, preserve native sidebar/command/settings entry points and status state. Patch plugin to 0.3.1; server remains 0.3.0. Verify single-worker regression/build, install with private backup and byte-identical user settings/journals, then publish source/assets to the existing authorized GitHub repository. Runtime UI reload depends on macOS access.
+
+
+Delivery verified: 99 client tests/build, both byte-preserving installations, package audit and GitHub main/v0.3.1 release assets complete. All six uploaded assets match local SHA-256. Actual running UI still requires reload because native permissions are not granted.
