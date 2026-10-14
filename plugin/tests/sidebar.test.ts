@@ -25,6 +25,7 @@ const ui=vi.hoisted(()=>{
   return {Element};
 });
 vi.mock('obsidian',()=>({
+  addIcon:vi.fn(),
   ItemView:class {
     app:App;contentEl=new ui.Element();cleanup:(()=>void)[]=[];
     constructor(leaf:WorkspaceLeaf){this.app=(leaf as unknown as {app:App}).app;}
@@ -271,4 +272,19 @@ test('inline configuration approval keeps complete plugin groups and applies onl
   const toggles=f.box.all().filter(el=>el.tag==='input');expect(toggles.length).toBe(2);await toggles[1].onclick!();
   await f.button('Apply selected').onclick!();expect(apply).toHaveBeenCalledWith(updates.slice(0,2));
   expect(f.host.feedback).toHaveBeenCalledWith('Applied 2 configuration files. Reload Obsidian.');
+});
+test('failed preview removes its loading indicator and shows the actual path error inline',async()=>{
+  const f=fixture();await f.view.onOpen();const plugin=pagePlugin(f);
+  plugin.engine={state:emptyState(),preview:async()=>{throw new Error('Unsupported path: folder: title/note.md');}} as unknown as SyncEngine;
+  await plugin.preview();expect(f.box.all().some(el=>el.text==='Loading preview…')).toBe(false);
+  expect(plugin.sidebarSnapshot()).toMatchObject({busy:false,feedback:{text:'Unsupported path: folder: title/note.md',error:true}});
+  expect(f.box.all().some(el=>el.text==='Sync this plan')).toBe(false);
+});
+test('failed history removes its loading indicator without offering a restore',async()=>{
+  const f=fixture();await f.view.onOpen();const plugin=pagePlugin(f),state=emptyState();
+  state.files.note={id:'note',path:'note.md',revision:1,hash:'a'.repeat(64),size:1,deleted:false};
+  plugin.engine={state} as unknown as SyncEngine;plugin.api={history:async()=>{throw new Error('offline');}} as never;
+  await plugin.history();await f.button('View history').onclick!();
+  expect(f.box.all().some(el=>el.text==='Loading history…')).toBe(false);
+  expect(f.box.all().some(el=>el.text==='Restore this revision')).toBe(false);expect(plugin.sidebarSnapshot().busy).toBe(false);
 });

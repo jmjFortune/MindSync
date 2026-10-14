@@ -12,6 +12,7 @@ import {Settings, SettingsDraft, SettingsStore, connectionSettings} from './sett
 import {MINDSYNC_VIEW,MindSyncView,openSidebar} from './sidebar';
 import type {SidebarSnapshot} from './sidebar-state';
 import type {PanelRenderer} from './panel-page';
+import {MINDSYNC_ICON,registerMindSyncIcon} from './icon';
 export default class MindSync extends Plugin {
   settings: Settings = {server:'',token:'',deviceName:Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'Mac' : 'PC',paused:false,configuration:defaultConfigurationSelection()};
   private connection=new ConnectionContext(()=>this.settings);
@@ -53,8 +54,9 @@ export default class MindSync extends Plugin {
   async onload() {
     this.settings = {...this.settings,...await this.loadData()};
     this.settings.configuration={...defaultConfigurationSelection(),...this.settings.configuration};
+    registerMindSyncIcon();
     this.registerView(MINDSYNC_VIEW,leaf=>new MindSyncView(leaf,this));
-    this.addRibbonIcon('refresh-cw','MindSync: Open panel',()=>void this.openPanel());
+    this.addRibbonIcon(MINDSYNC_ICON,'MindSync: Open panel',()=>void this.openPanel());
     this.addCommand({id:'open-panel',name:'Open MindSync',callback:()=>void this.openPanel()});
     this.addCommand({id:'sync',name:'Sync now',callback:()=>void this.sync(true)});
     this.addCommand({id:'preview',name:'Preview sync plan',callback:()=>void this.preview()});
@@ -155,7 +157,7 @@ export default class MindSync extends Plugin {
           if(current.server!==viewed.server||current.token!==viewed.token){this.feedback('Connection settings changed. Preview the sync plan again',true);return;}
           session.close();await this.sync(true,true);
         }));
-      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{this.setBusy(false);}
+      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{if(session.active())loading.remove();this.setBusy(false);}
     });
   }
   async testConnection(){if(this.busy)return;this.setBusy(true,'Testing connection…');try{const info=await this.connection.run(()=>this.api.info());this.feedback(`Connected. Protocol ${info.protocol}, remote revision ${info.cursor}`);}catch(e){this.report(e);this.feedback(this.lastError,true);}finally{this.setBusy(false);}}
@@ -196,7 +198,7 @@ export default class MindSync extends Plugin {
             await this.sync(true);if(session.active()){session.close();this.feedback(`Restored a historical revision of ${record.path}`);}
           }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{b.setDisabled(false);}
         }));
-      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{this.setBusy(false);}
+      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{if(session.active())loading.remove();this.setBusy(false);}
     });
   }
 

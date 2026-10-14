@@ -1,6 +1,7 @@
 import {ButtonComponent,ItemView,type Workspace,type WorkspaceLeaf} from 'obsidian';
 import {sidebarPresentation,type SidebarAction,type SidebarSnapshot} from './sidebar-state';
 import type {PanelRenderer} from './panel-page';
+import {MINDSYNC_ICON} from './icon';
 
 export const MINDSYNC_VIEW='mindsync-sidebar';
 export interface SidebarHost {
@@ -49,7 +50,7 @@ export class MindSyncView extends ItemView {
   constructor(leaf:WorkspaceLeaf,private host:SidebarHost){super(leaf);}
   getViewType(){return MINDSYNC_VIEW;}
   getDisplayText(){return 'MindSync';}
-  getIcon(){return 'refresh-cw';}
+  getIcon(){return MINDSYNC_ICON;}
   async onOpen() {
     this.unsubscribe?.();this.active=true;this.generation++;this.buttons.clear();this.values.clear();this.conflictsKey='';
     const box=this.contentEl;box.empty();box.addClass('mindsync-sidebar');
