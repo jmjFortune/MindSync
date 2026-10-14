@@ -6,7 +6,17 @@
 .mindsync-settings .setting-item { align-items: center; }
 .mindsync-settings .setting-item-control { align-items: center; flex-wrap: wrap; }
 .mindsync-settings .setting-item-description:empty { display: none; }
-.mindsync-sidebar { overflow-x: hidden; }
+.mindsync-sidebar { overflow-x: hidden; font-family: var(--font-interface); font-size: var(--nav-item-size, var(--font-ui-small)); line-height: var(--line-height-tight); }
+.mindsync-sidebar [hidden] { display: none !important; }
+.mindsync-sidebar p { margin-block: 8px; }
+.mindsync-sidebar h3 { font-size: inherit; font-weight: var(--font-medium); margin-block: 16px 8px; }
+.mindsync-sidebar .setting-item-name, .mindsync-sidebar .setting-item-description, .mindsync-sidebar button, .mindsync-sidebar input, .mindsync-sidebar select { font-size: inherit; }
+.mindsync-sidebar .setting-item { flex-wrap: wrap; gap: 8px; padding-block: 8px; }
+.mindsync-sidebar .setting-item-info { min-width: 0; overflow-wrap: anywhere; }
+.mindsync-sidebar .setting-item-control { flex-wrap: wrap; }
+.mindsync-sidebar-page-header { display: flex; align-items: center; gap: 8px; margin-block: 12px; }
+.mindsync-sidebar-page-header h3 { margin: 0; }
+.mindsync-sidebar pre { font-size: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 .mindsync-sidebar-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .mindsync-sidebar-toolbar button.clickable-icon { background: transparent; box-shadow: none; padding: 6px; height: auto; }
 .mindsync-sidebar-toolbar button.clickable-icon:hover:not(:disabled) { background: var(--background-modifier-hover); }

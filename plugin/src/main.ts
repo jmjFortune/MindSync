@@ -1,7 +1,7 @@
-import {App, Modal, Notice, Platform, Plugin, PluginSettingTab, requestUrl, requireApiVersion, Setting, TAbstractFile, TFolder, type ButtonComponent} from 'obsidian';
+import {App, Platform, Plugin, PluginSettingTab, requestUrl, requireApiVersion, Setting, TAbstractFile, TFolder, type ButtonComponent} from 'obsidian';
 import {Api} from './api';
 import {ConnectionContext} from './connection';
-import {PlanItem, SyncEngine} from './engine';
+import {SyncEngine} from './engine';
 import {ObsidianLocal} from './local';
 import {FileRecord, included, SyncError} from './types';
 import {ConfigurationLocal} from './configuration-local';
@@ -11,6 +11,7 @@ import {showConfigurationSettings,showConfigurationUpdates} from './configuratio
 import {Settings, SettingsDraft, SettingsStore, connectionSettings} from './settings';
 import {MINDSYNC_VIEW,MindSyncView,openSidebar} from './sidebar';
 import type {SidebarSnapshot} from './sidebar-state';
+import type {PanelRenderer} from './panel-page';
 export default class MindSync extends Plugin {
   settings: Settings = {server:'',token:'',deviceName:Platform.isAndroidApp ? 'Android' : Platform.isMacOS ? 'Mac' : 'PC',paused:false,configuration:defaultConfigurationSelection()};
   private connection=new ConnectionContext(()=>this.settings);
@@ -26,6 +27,7 @@ export default class MindSync extends Plugin {
   status = 'Not configured'; lastError = ''; private busy = false; private failures = 0; private nextRetry = 0;
   private timeout?: number;
   private activity='';
+  private panelFeedback?:{text:string;error:boolean};
   private sidebarListeners=new Set<()=>void>();
   sidebarSnapshot():SidebarSnapshot {
     return {available:!this.unloading,connected:!!this.settings.server&&!!this.settings.token,ready:!!this.engine,
@@ -33,15 +35,21 @@ export default class MindSync extends Plugin {
       paused:this.settings.paused,busy:this.busy,activity:this.activity,status:this.status,error:this.lastError,
       progress:this.engine?.progress,lastSuccess:this.engine?.state.lastSuccess,pending:this.engine?.state.pending.length??0,
       configurationStatus:this.configurationStatus,updates:this.configuration?.updates().length??0,
-      conflicts:(this.engine?.state.conflicts??[]).map(path=>({path,source:this.engine?.state.conflictDetails?.[path]?.source}))};
+      conflicts:(this.engine?.state.conflicts??[]).map(path=>({path,source:this.engine?.state.conflictDetails?.[path]?.source})),feedback:this.panelFeedback};
   }
   subscribeSidebar(listener:()=>void){this.sidebarListeners.add(listener);return ()=>{this.sidebarListeners.delete(listener);};}
   private notifySidebar(){for(const listener of this.sidebarListeners){try{listener();}catch(error){console.error('MindSync sidebar update failed',error);}}}
-  private setBusy(busy:boolean,activity=''){this.busy=busy;this.activity=activity;this.notifySidebar();}
+  private setBusy(busy:boolean,activity=''){this.busy=busy;this.activity=activity;if(busy)this.panelFeedback=undefined;this.notifySidebar();}
+  feedback(text:string,error=false){this.panelFeedback={text,error};this.notifySidebar();}
   async togglePause(){await this.updateSettings(current=>({paused:!current.paused}));}
-  manageConfiguration(){showConfigurationSettings(this);}
+  manageConfiguration(){return showConfigurationSettings(this);}
   async reviewConfiguration(){await showConfigurationUpdates(this);}
-  private async openPanel(reveal=true){if(this.unloading)return;try{await openSidebar(this.app.workspace,reveal);}catch(error){if(!this.unloading)new Notice(error instanceof Error?error.message:String(error),8000);}}
+  private async openPanel(reveal=true){if(this.unloading)return;try{await openSidebar(this.app.workspace,reveal);}catch(error){if(!this.unloading)this.feedback(error instanceof Error?error.message:String(error),true);}}
+  async openPage(title:string,render:PanelRenderer){
+    if(this.unloading)return;
+    try{const leaf=await openSidebar(this.app.workspace);if(!this.unloading&&leaf?.view instanceof MindSyncView)await leaf.view.showPage(title,render);}
+    catch(error){if(!this.unloading)this.feedback(error instanceof Error?error.message:String(error),true);}
+  }
   async onload() {
     this.settings = {...this.settings,...await this.loadData()};
     this.settings.configuration={...defaultConfigurationSelection(),...this.settings.configuration};
@@ -101,13 +109,13 @@ export default class MindSync extends Plugin {
   configurationSelection(){return this.settings.configuration;}
   async saveConfigurationSelection(selection:ConfigurationSelection,expected?:ConfigurationSelection){await this.updateSettings({configuration:selection},expected?{configuration:expected}:undefined);}
   async runConfiguration<T>(work:()=>Promise<T>,manual=true):Promise<T|undefined>{
-    if(this.busy||this.unloading){this.configurationStatus='Another sync is in progress. Try again shortly';this.notifySidebar();if(manual)new Notice(this.configurationStatus);return;}
-    if(!this.settings.server||!this.settings.token){this.configurationStatus='Configure the server and register this device first';this.notifySidebar();if(manual)new Notice(this.configurationStatus);return;}
+    if(this.busy||this.unloading){this.configurationStatus='Another sync is in progress. Try again shortly';this.notifySidebar();if(manual)this.feedback(this.configurationStatus,true);return;}
+    if(!this.settings.server||!this.settings.token){this.configurationStatus='Configure the server and register this device first';this.notifySidebar();if(manual)this.feedback(this.configurationStatus,true);return;}
     this.configurationStatus='Syncing configuration…';this.setBusy(true,'Syncing configuration…');
     try{
       const result=await this.connection.run(work);
       this.configurationRetry=0;this.configurationStatus=`${this.configuration?.updates().length??0} configuration updates awaiting review${this.configuration?.local.state.incompleteGroups?.length?'; waiting for complete package uploads':''}`;return result;
-    }catch(error){this.configurationStatus=error instanceof Error?error.message:String(error);this.configurationRetry=Date.now()+60000;if(manual)new Notice(this.configurationStatus,8000);}
+    }catch(error){this.configurationStatus=error instanceof Error?error.message:String(error);this.configurationRetry=Date.now()+60000;if(manual)this.feedback(this.configurationStatus,true);}
     finally{this.setBusy(false);}
   }
   private async syncConfiguration(manual=false){
@@ -120,91 +128,94 @@ export default class MindSync extends Plugin {
     if(this.unloading || !this.engine || this.busy || !this.settings.server || !this.settings.token || (!manual && (this.settings.paused || Date.now()<this.nextRetry)))return;
     this.status='Syncing…';this.setBusy(true,'Syncing…');
     let previewRequired=false;
-    try {await this.connection.run(()=>this.engine!.sync(allowMerge));this.status='Synced';this.lastError='';this.failures=0;this.nextRetry=0;if(manual)new Notice('NAS sync completed');}
+    try {await this.connection.run(()=>this.engine!.sync(allowMerge));this.status='Synced';this.lastError='';this.failures=0;this.nextRetry=0;if(manual)this.feedback('Sync completed');}
     catch(error){this.report(error);this.failures++;this.nextRetry=error instanceof SyncError && ['UNAUTHORIZED','FORBIDDEN','HTTP_401','HTTP_403'].includes(error.code) ? Infinity : Date.now()+Math.min(60000,2000*2**Math.min(this.failures,5))+Math.random()*1000;
       if(error instanceof SyncError && error.code==='INITIAL_MERGE_REQUIRED') { previewRequired=manual; }
-      else if(manual)new Notice(this.lastError,8000);
+      else if(manual)this.feedback(this.lastError,true);
     }finally{this.setBusy(false);}
     if(previewRequired)await this.preview();
     else if(manual)await this.syncConfiguration(true);
   }
   async preview(){
-    if(!this.engine||this.busy)return;this.setBusy(true,'Loading preview…');
-    try{
-      let viewed=this.connection.current;
-      const items=await this.connection.run(()=>{viewed=this.connection.current;return this.engine!.preview();});
-      new Preview(this.app,items,()=>{
-        const current=this.connection.current;
-        if(current.server!==viewed.server||current.token!==viewed.token){new Notice('Connection settings changed. Preview the sync plan again');void this.preview();}
-        else void this.sync(true,true);
-      }).open();
-    }catch(e){this.report(e);new Notice(this.lastError);}finally{this.setBusy(false);}
+    if(!this.engine||this.busy)return;
+    await this.openPage('Sync preview',async(box,session)=>{
+      if(this.busy)return;this.setBusy(true,'Loading preview…');
+      const loading=box.createEl('p',{text:'Loading preview…',attr:{role:'status'}});
+      try{
+        let viewed=this.connection.current;
+        const items=await this.connection.run(()=>{viewed=this.connection.current;return this.engine!.preview();});
+        if(!session.active())return;loading.remove();
+        const list=box.createEl('ul',{cls:'mindsync-list'});
+        for(const item of items)list.createEl('li',{text:`${item.action}: ${item.path}`});
+        if(!items.length)list.createEl('li',{text:'No pending changes'});
+        new Setting(box).addButton(b=>b.setButtonText('Sync this plan').setCta().onClick(async()=>{
+          if(!session.active())return;
+          if(this.busy){this.feedback('Sync is in progress. Try again shortly',true);return;}
+          const current=this.connection.current;
+          if(current.server!==viewed.server||current.token!==viewed.token){this.feedback('Connection settings changed. Preview the sync plan again',true);return;}
+          session.close();await this.sync(true,true);
+        }));
+      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{this.setBusy(false);}
+    });
   }
-  async testConnection(){if(this.busy)return;this.setBusy(true,'Testing connection…');try{const info=await this.connection.run(()=>this.api.info());new Notice(`Connected. Protocol ${info.protocol}, remote revision ${info.cursor}`);}catch(e){this.report(e);new Notice(this.lastError,8000);}finally{this.setBusy(false);}}
-  async registerDevice(adminToken:string){if(this.busy)throw new SyncError('SYNC_BUSY','Sync is in progress. Try registering the device later');this.setBusy(true,'Registering device…');try{await this.connection.run(async()=>{const server=this.connection.current.server;const device=await this.makeApi(adminToken).register(this.settings.deviceName);await this.updateSettings({token:device.token},{server});new Notice('Device registered');});}finally{this.setBusy(false);}}
-  showStatus(){
-    const modal=new Modal(this.app); modal.setTitle('NAS sync status'); const box=modal.contentEl;
-    box.createEl('p',{text:this.settings.paused?'Sync paused':this.status});
-    if(this.lastError)box.createEl('p',{text:this.lastError,cls:'mindsync-error',attr:{role:'alert'}});
-    box.createEl('p',{text:`Pending operations: ${this.engine?.state.pending.length??0}; Last successful sync: ${this.engine?.state.lastSuccess ? new Date(this.engine.state.lastSuccess).toLocaleString('en-US'):'Never'}`,cls:'mindsync-summary'});
-    const transfer=box.createEl('p');
-    const updateTransfer=()=>{const p=this.engine?.progress;transfer.setText(p?`${p.direction==='upload'?'Upload':'Download'} ${p.path}: ${p.completed}/${p.total} chunks`:'');};
-    updateTransfer();const progressTimer=window.setInterval(updateTransfer,500);
-    const close=modal.onClose.bind(modal);modal.onClose=()=>{window.clearInterval(progressTimer);close();};
-    const capacity=box.createEl('p',{text:'Loading NAS storage information…'});
-    void this.api.info().then(info=>capacity.setText(`Stored content: ${(info.storage_bytes/1048576).toFixed(1)} MiB; File size limit: ${(info.max_file_bytes/1048576).toFixed(1)} MiB. ${info.logical_bytes===undefined?'':`Logical history size: ${(info.logical_bytes/1048576).toFixed(1)} MiB; `}`)).catch(()=>capacity.setText('NAS storage information is unavailable'));
-    box.createEl('p',{text:`Settings and plugins: ${this.configurationStatus}`});
-    if(this.configuration?.updates().length)new Setting(box).setName('Pending configuration updates').addButton(b=>b.setButtonText('Review updates').onClick(()=>{modal.close();void showConfigurationUpdates(this);}));
-    const list=box.createEl('ul',{cls:'mindsync-list'});
-    for(const path of this.engine?.state.conflicts??[]){
-      const item=list.createEl('li'); const details=this.engine?.state.conflictDetails?.[path];
-      item.createEl('p',{text:details ? `${path}; Source: ${details.source}; Device: ${details.device}; ${new Date(details.time).toLocaleString('en-US')}` : path});
-      const copy=item.createEl('button',{text:'Open conflict copy'});copy.onclick=()=>void this.app.workspace.openLinkText(path,'');
-      if(details){const both=item.createEl('button',{text:'Open both versions'});both.onclick=()=>{
-        void this.app.workspace.openLinkText(details.source,'',true);
-        void this.app.workspace.openLinkText(path,'',true);
-      };}
-    }
-    new Setting(box).addButton(b=>b.setButtonText('Retry now').onClick(()=>{modal.close();void this.sync(true);})).addButton(b=>b.setButtonText('Preview sync').onClick(()=>{modal.close();void this.preview();})); modal.open();
-  }
+  async testConnection(){if(this.busy)return;this.setBusy(true,'Testing connection…');try{const info=await this.connection.run(()=>this.api.info());this.feedback(`Connected. Protocol ${info.protocol}, remote revision ${info.cursor}`);}catch(e){this.report(e);this.feedback(this.lastError,true);}finally{this.setBusy(false);}}
+  async registerDevice(adminToken:string){if(this.busy)throw new SyncError('SYNC_BUSY','Sync is in progress. Try registering the device later');this.setBusy(true,'Registering device…');try{await this.connection.run(async()=>{const server=this.connection.current.server;const device=await this.makeApi(adminToken).register(this.settings.deviceName);await this.updateSettings({token:device.token},{server});this.feedback('Device registered');});}finally{this.setBusy(false);}}
+  showStatus(){void this.openPanel();}
   async history(){
     if(this.busy)return;
     const active=this.app.workspace.getActiveFile();
     const records=Object.values(this.engine?.state.files??{});
     const record=records.find(f=>f.path===active?.path&&!f.deleted);
     if(record){await this.showHistory(record);return;}
-    if(!records.length){new Notice('No synced files have history yet');return;}
-    const modal=new Modal(this.app);modal.setTitle('Select a file to view history');
-    for(const file of records)new Setting(modal.contentEl).setName(file.path).setDesc(file.deleted?'Deleted':'Current revision').addButton(b=>b.setButtonText('View history').onClick(()=>{modal.close();void this.showHistory(file);}));
-    modal.open();
+    await this.openPage('File history',(box,session)=>{
+      if(!records.length){box.createEl('p',{text:'No synced files have history yet'});return;}
+      for(const file of records)new Setting(box).setName(file.path).setDesc(file.deleted?'Deleted':'Current revision').addButton(b=>b.setButtonText('View history').onClick(async()=>{
+        if(session.active())await this.showHistory(file);
+      }));
+    });
   }
   private async showHistory(record:FileRecord){
-    if(this.busy)return;this.setBusy(true,'Loading history…');
-    try{
-      const versions=await this.connection.run(()=>this.api.history(record.id));const modal=new Modal(this.app);modal.setTitle(`History: ${record.path}`);
-      for(const version of versions.versions.filter(v=>!v.deleted))new Setting(modal.contentEl).setName(`Revision ${version.revision}`).setDesc(`${version.size} bytes`).addButton(b=>b.setButtonText('Restore this revision').onClick(async()=>{
-        b.setDisabled(true);
-        try{if(this.busy)throw new SyncError('SYNC_BUSY','Sync is in progress. Try restoring later');this.setBusy(true,'Restoring history…');try{await this.connection.run(()=>this.engine!.restore(record.id,version));}finally{this.setBusy(false);}await this.sync(true);modal.close();new Notice(`Restored a historical revision of ${record.path}`);}
-        catch(e){this.report(e);new Notice(this.lastError,8000);}
-        finally{b.setDisabled(false);}
-      }));
-      modal.open();
-    }catch(e){this.report(e);new Notice(this.lastError);}finally{this.setBusy(false);}
+    if(this.busy)return;
+    await this.openPage(`History: ${record.path}`,async(box,session)=>{
+      if(this.busy)return;this.setBusy(true,'Loading history…');
+      const loading=box.createEl('p',{text:'Loading history…',attr:{role:'status'}});
+      try{
+        let viewed=this.connection.current;
+        const versions=await this.connection.run(()=>{viewed=this.connection.current;return this.api.history(record.id);});
+        if(!session.active())return;loading.remove();
+        const available=versions.versions.filter(v=>!v.deleted);
+        if(!available.length)box.createEl('p',{text:'No restorable revisions'});
+        for(const version of available)new Setting(box).setName(`Revision ${version.revision}`).setDesc(`${version.size} bytes`).addButton(b=>b.setButtonText('Restore this revision').onClick(async()=>{
+          if(!session.active())return;b.setDisabled(true);
+          try{
+            if(this.busy)throw new SyncError('SYNC_BUSY','Sync is in progress. Try restoring later');
+            const current=this.connection.current;
+            if(current.server!==viewed.server||current.token!==viewed.token)throw new SyncError('SETTINGS_CHANGED','Connection settings changed. Open file history again');
+            this.setBusy(true,'Restoring history…');
+            try{await this.connection.run(()=>this.engine!.restore(record.id,version));}finally{this.setBusy(false);}
+            await this.sync(true);if(session.active()){session.close();this.feedback(`Restored a historical revision of ${record.path}`);}
+          }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{b.setDisabled(false);}
+        }));
+      }catch(e){this.report(e);if(session.active())this.feedback(this.lastError,true);}finally{this.setBusy(false);}
+    });
   }
+
 }
-class Preview extends Modal {
-  constructor(app:App,private items:PlanItem[],private run:()=>void){super(app);}
-  onOpen(){this.setTitle('Sync preview');const list=this.contentEl.createEl('ul',{cls:'mindsync-list'});for(const item of this.items)list.createEl('li',{text:`${item.action}: ${item.path}`});if(!this.items.length)list.createEl('li',{text:'No pending changes'});new Setting(this.contentEl).addButton(b=>b.setButtonText('Close').onClick(()=>this.close())).addButton(b=>b.setButtonText('Sync this plan').setCta().onClick(()=>{this.close();this.run();}));}
-}
+
 class NasSettings extends PluginSettingTab {
+  private unsubscribe?:()=>void;
   constructor(app:App,private plugin:MindSync){super(app,plugin);}
-  hide(){super.hide();this.containerEl.removeClass('mindsync-settings');}
+  hide(){this.unsubscribe?.();this.unsubscribe=undefined;super.hide();this.containerEl.removeClass('mindsync-settings');}
   display(){
+    this.unsubscribe?.();
     const {containerEl:el}=this;el.empty();el.addClass('mindsync-settings');el.createEl('h2',{text:'MindSync'});
     const draft=new SettingsDraft(connectionSettings(this.plugin.settings));
     const actions:ButtonComponent[]=[],inputs:{setDisabled(value:boolean):unknown}[]=[];
     let saving=false,admin='',save:ButtonComponent|undefined,register:ButtonComponent|undefined;
     const error=el.createEl('p',{cls:'mindsync-error',attr:{role:'alert'}});error.hidden=true;
+    const feedback=el.createEl('p',{attr:{role:'status'}});
+    const updateFeedback=()=>{const result=this.plugin.sidebarSnapshot().feedback;feedback.setText(result?.text??'');feedback.hidden=!result;feedback.toggleClass('mindsync-error',result?.error??false);feedback.setAttribute('role',result?.error?'alert':'status');};
+    this.unsubscribe=this.plugin.subscribeSidebar(updateFeedback);updateFeedback();
     const refresh=()=>{
       save?.setDisabled(saving||!draft.dirty);save?.setButtonText(saving?'Saving…':'Save changes');
       for(const action of actions)action.setDisabled(saving||draft.dirty);
@@ -249,7 +260,7 @@ class NasSettings extends PluginSettingTab {
     });
     new Setting(el).addButton(b=>{
       save=b;b.setButtonText('Save changes').setCta().onClick(async()=>{
-        saving=true;refresh();try{await this.plugin.updateSettings(draft.patch(),draft.expected());this.display();new Notice('Changes saved');}
+        saving=true;refresh();try{await this.plugin.updateSettings(draft.patch(),draft.expected());this.display();this.plugin.feedback('Changes saved');}
         catch(value){report(value);}finally{saving=false;refresh();}
       });
     });

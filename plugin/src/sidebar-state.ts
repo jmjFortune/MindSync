@@ -19,6 +19,7 @@ export interface SidebarSnapshot {
   configurationStatus:string;
   updates:number;
   conflicts:{path:string;source?:string}[];
+  feedback?:{text:string;error:boolean};
 }
 
 export function sidebarPresentation(state:SidebarSnapshot) {

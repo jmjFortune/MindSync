@@ -7,21 +7,22 @@ import {emptyState} from '../src/types';
 
 const ui=vi.hoisted(()=>{
   class Element {
-    children:Element[]=[];text='';cls='';attrs:Record<string,string>={};hidden=false;disabled=false;
+    children:Element[]=[];text='';cls='';attrs:Record<string,string>={};hidden=false;disabled=false;inert=false;
+    parent?:Element;
     onclick?:()=>Promise<unknown>;tag:string;
     constructor(tag='div'){this.tag=tag;}
     createEl(tag:string,options:{text?:string;cls?:string;attr?:Record<string,string>}={}){
-      const child=new Element(tag);child.text=options.text??'';child.cls=options.cls??'';child.attrs={...options.attr};this.children.push(child);return child;
+      const child=new Element(tag);child.text=options.text??'';child.cls=options.cls??'';child.attrs={...options.attr};child.parent=this;this.children.push(child);return child;
     }
     createDiv(options:{cls?:string;attr?:Record<string,string>}={}){return this.createEl('div',options);}
     setText(text:string){this.text=text;}
     addClass(cls:string){this.cls+=' '+cls;}
     empty(){this.children=[];this.text='';}
+    remove(){if(this.parent)this.parent.children=this.parent.children.filter(child=>child!==this);}
     setAttribute(key:string,value:string){this.attrs[key]=value;}
     all():Element[]{return [this,...this.children.flatMap(child=>child.all())];}
   }
-  const notices:string[]=[];
-  return {Element,notices};
+  return {Element};
 });
 vi.mock('obsidian',()=>({
   ItemView:class {
@@ -37,16 +38,36 @@ vi.mock('obsidian',()=>({
     setClass(cls:string){this.buttonEl.cls=cls;return this;}
     setButtonText(text:string){this.buttonEl.text=text;return this;}
     setDisabled(value:boolean){this.buttonEl.disabled=value;return this;}
+    setCta(){return this;}
     onClick(callback:()=>Promise<unknown>){this.buttonEl.onclick=callback;return this;}
   },
-  Notice:class {constructor(text:string){ui.notices.push(text);}},
+  Notice:class {constructor(){throw new Error('Popup notices are forbidden');}},
   Plugin:class {constructor(public app:App){} async saveData(_value:unknown){}},
-  PluginSettingTab:class {},Modal:class {},Setting:class {},TFolder:class {},
+  PluginSettingTab:class {},Modal:class {constructor(){throw new Error('Modal dialogs are forbidden');}},
+  Setting:class {
+    settingEl:InstanceType<typeof ui.Element>;
+    constructor(container:InstanceType<typeof ui.Element>){this.settingEl=container.createDiv();}
+    setName(name:string){this.settingEl.createEl('span',{text:name});return this;}
+    setDesc(text:string){this.settingEl.createEl('span',{text});return this;}
+    addButton(build:(button:unknown)=>void){
+      const el=this.settingEl.createEl('button');
+      const button={buttonEl:el,setButtonText:(text:string)=>{el.text=text;return button;},setCta:()=>button,setDisabled:(value:boolean)=>{el.disabled=value;return button;},onClick:(callback:()=>Promise<unknown>)=>{el.onclick=callback;return button;}};
+      build(button);return this;
+    }
+    addToggle(build:(toggle:unknown)=>void){
+      const el=this.settingEl.createEl('input');let change:(value:boolean)=>unknown;
+      const toggle={setValue:(value:boolean)=>{el.attrs.checked=String(value);return toggle;},onChange:(callback:(value:boolean)=>unknown)=>{change=callback;el.onclick=async()=>{await change(el.attrs.checked!=='true');};return toggle;}};
+      build(toggle);return this;
+    }
+  },TFolder:class {},
   Platform:{isMacOS:true},requireApiVersion:()=>true,requestUrl:vi.fn(),
 }));
 import MindSync from '../src/main';
 import {MINDSYNC_VIEW,MindSyncView,openSidebar,type SidebarHost} from '../src/sidebar';
 import {sidebarPresentation} from '../src/sidebar-state';
+import {showConfigurationSettings,showConfigurationUpdates,type ConfigurationUiHost} from '../src/configuration-ui';
+import {defaultConfigurationSelection} from '../src/configuration-paths';
+import type {PanelSession} from '../src/panel-page';
 
 function snapshot():SidebarSnapshot {
   return {available:true,connected:true,ready:true,configurationReady:true,configurationEnabled:true,paused:false,busy:false,
@@ -56,7 +77,7 @@ function fixture(){
   const state=snapshot(),listeners=new Set<()=>void>();
   const host:SidebarHost={sidebarSnapshot:()=>state,subscribeSidebar:listener=>{listeners.add(listener);return()=>{listeners.delete(listener);};},
     sync:vi.fn(async()=>{}),preview:vi.fn(async()=>{}),history:vi.fn(async()=>{}),togglePause:vi.fn(async()=>{}),
-    manageConfiguration:vi.fn(),reviewConfiguration:vi.fn(async()=>{})};
+    manageConfiguration:vi.fn(),reviewConfiguration:vi.fn(async()=>{}),feedback:vi.fn((text,error=false)=>{state.feedback={text,error};for(const listener of listeners)listener();})};
   const workspace={openLinkText:vi.fn(async()=>{})};
   const view=new MindSyncView({app:{workspace}} as unknown as WorkspaceLeaf,host);
   const box=view.contentEl as unknown as InstanceType<typeof ui.Element>;
@@ -130,9 +151,9 @@ test('conflict actions open tracked paths in Obsidian and do not invoke sync',as
 test('closing unsubscribes and an in-flight action cannot update a closed view',async()=>{
   const f=fixture();let reject!:(error:Error)=>void;
   vi.mocked(f.host.sync).mockImplementation(()=>new Promise<void>((_resolve,rejectPromise)=>{reject=rejectPromise;}));
-  await f.view.onOpen();const button=f.button('Sync now'),pending=button.onclick!(),notices=ui.notices.length;
+  await f.view.onOpen();const button=f.button('Sync now'),pending=button.onclick!();
   await f.view.onClose();expect(f.listeners.size).toBe(0);f.notify();reject(new Error('late failure'));await pending;
-  expect(f.box.children).toEqual([]);expect(ui.notices.length).toBe(notices);
+  expect(f.box.children).toEqual([]);expect(f.host.feedback).not.toHaveBeenCalled();
   await button.onclick!();expect(f.host.sync).toHaveBeenCalledTimes(1);
   await f.view.onOpen();expect(f.listeners.size).toBe(1);await f.view.onClose();expect(f.listeners.size).toBe(0);
 });
@@ -154,9 +175,9 @@ test('plugin notifications show running and final state, and unsubscribe stops d
 test('failed pause persistence retains active settings and reports the failure in the panel',async()=>{
   const plugin=new MindSync({} as App,{id:'mindsync'} as never);const state=plugin.sidebarSnapshot();
   vi.spyOn(plugin,'saveData').mockRejectedValue(new Error('disk full'));
-  const f=fixture();f.host.togglePause=()=>plugin.togglePause();await f.view.onOpen();const notices=ui.notices.length;
+  const f=fixture();f.host.togglePause=()=>plugin.togglePause();await f.view.onOpen();
   await f.button('Pause automatic sync').onclick!();expect(plugin.settings.paused).toBe(state.paused);
-  expect(ui.notices.slice(notices)).toEqual(['disk full']);
+  expect(f.host.feedback).toHaveBeenCalledWith('disk full',true);expect(f.box.all().some(el=>el.text==='disk full'&&el.attrs.role==='alert')).toBe(true);
 });
 test('configuration work and unload notify subscribers without a new network poll',async()=>{
   const plugin=new MindSync({} as App,{id:'mindsync'} as never);plugin.settings.server='https://fixture.example';plugin.settings.token='fixture-token';
@@ -173,4 +194,81 @@ test('a failing view observer cannot turn a durable settings save into a failure
   const stop=plugin.subscribeSidebar(()=>{throw error;});
   try{await plugin.togglePause();expect(plugin.settings.paused).toBe(true);expect(log).toHaveBeenCalledWith('MindSync sidebar update failed',error);}
   finally{stop();log.mockRestore();}
+});
+test('inline pages return to overview and invalidate pending results without reopening',async()=>{
+  const f=fixture();await f.view.onOpen();let release!:()=>void,session!:PanelSession;
+  const gate=new Promise<void>(resolve=>{release=resolve;});
+  const pending=f.view.showPage('Preview',async(box,current)=>{session=current;await gate;if(current.active())box.createEl('p',{text:'late result'});});
+  expect(f.box.all().some(el=>el.text==='Preview')).toBe(true);await f.button('Back').onclick!();
+  release();await pending;expect(session.active()).toBe(false);expect(f.box.all().some(el=>el.text==='late result')).toBe(false);
+  expect(f.box.all().some(el=>el.text==='Conflicts')).toBe(true);
+});
+test('progress and inline feedback preserve an active page and its unsaved controls',async()=>{
+  const f=fixture();await f.view.onOpen();let content!:HTMLElement;
+  await f.view.showPage('Settings',(box)=>{content=box;box.createEl('input',{attr:{value:'unsaved draft'}});});
+  const input=(content as unknown as InstanceType<typeof ui.Element>).children[0];
+  f.state.busy=true;f.state.activity='Syncing…';f.notify();f.host.feedback('disk full',true);
+  expect((content as unknown as InstanceType<typeof ui.Element>).children[0]).toBe(input);
+  expect(input.attrs.value).toBe('unsaved draft');expect(f.box.all().some(el=>el.text==='disk full'&&el.attrs.role==='alert')).toBe(true);
+});
+function pagePlugin(f:ReturnType<typeof fixture>){
+  const plugin=new MindSync({workspace:{getActiveFile:()=>null}} as unknown as App,{id:'mindsync'} as never);
+  plugin.settings.server='https://fixture.example';plugin.settings.token='fixture-token';
+  vi.spyOn(plugin,'openPage').mockImplementation((title,render)=>f.view.showPage(title,render));return plugin;
+}
+test('preview approval remains explicit and rejects changed credentials without a modal',async()=>{
+  const f=fixture();await f.view.onOpen();const plugin=pagePlugin(f);
+  plugin.engine={state:emptyState(),preview:async()=>[{action:'upload',path:'note.md'}]} as unknown as SyncEngine;
+  const sync=vi.spyOn(plugin,'sync').mockResolvedValue();await plugin.preview();expect(sync).not.toHaveBeenCalled();
+  plugin.settings.token='changed-token';await f.button('Sync this plan').onclick!();expect(sync).not.toHaveBeenCalled();
+  expect(plugin.sidebarSnapshot().feedback?.error).toBe(true);plugin.settings.token='fixture-token';await f.button('Sync this plan').onclick!();expect(sync).toHaveBeenCalledWith(true,true);
+});
+test('leaving a loading preview does not populate or reopen it when the request returns',async()=>{
+  const f=fixture();await f.view.onOpen();const plugin=pagePlugin(f);let release!:(items:[])=>void;
+  plugin.engine={state:emptyState(),preview:()=>new Promise<[]>((resolve)=>{release=resolve;})} as unknown as SyncEngine;
+  const pending=plugin.preview();await Promise.resolve();await f.button('Back').onclick!();release([]);await pending;
+  expect(f.box.all().some(el=>el.text==='Sync this plan')).toBe(false);expect(plugin.sidebarSnapshot().busy).toBe(false);
+});
+test('history restores only after explicit selection and rejects changed server identity',async()=>{
+  const f=fixture();await f.view.onOpen();const plugin=pagePlugin(f),state=emptyState();
+  state.files.note={id:'note',path:'note.md',revision:1,hash:'a'.repeat(64),size:1,deleted:false};
+  const restore=vi.fn(async()=>{});plugin.engine={state,restore} as unknown as SyncEngine;
+  plugin.api={history:async()=>({versions:[{revision:1,deleted:false,size:1}]})} as never;
+  await plugin.history();await f.button('View history').onclick!();expect(restore).not.toHaveBeenCalled();
+  plugin.settings.server='https://changed.example';await f.button('Restore this revision').onclick!();expect(restore).not.toHaveBeenCalled();
+  expect(plugin.sidebarSnapshot().feedback?.text).toContain('Open file history again');
+});
+test('configuration selection uses inline Save changes and keeps the active selection untouched until saved',async()=>{
+  const f=fixture();await f.view.onOpen();let selection=defaultConfigurationSelection();
+  const save=vi.fn(async(value)=>{selection=value;});
+  const host:ConfigurationUiHost={openPage:(title,render)=>f.view.showPage(title,render),feedback:f.host.feedback,configurationStatus:'Disabled',
+    configurationSelection:()=>selection,saveConfigurationSelection:save,runConfiguration:async(work)=>work()};
+  await showConfigurationSettings(host);const toggle=f.box.all().find(el=>el.tag==='input')!;await toggle.onclick!();
+  expect(selection.enabled).toBe(false);expect(save).not.toHaveBeenCalled();await f.button('Save changes').onclick!();
+  expect(selection.enabled).toBe(true);expect(save).toHaveBeenCalledOnce();expect(f.host.feedback).toHaveBeenCalledWith('Changes saved');
+});
+test('late configuration review results are discarded after Back',async()=>{
+  const f=fixture();await f.view.onOpen();let release!:(value:[])=>void;
+  const host:ConfigurationUiHost={openPage:(title,render)=>f.view.showPage(title,render),feedback:f.host.feedback,configurationStatus:'Ready',
+    configurationSelection:defaultConfigurationSelection,saveConfigurationSelection:async()=>{},runConfiguration:async(work)=>work(),
+    configuration:{review:()=>new Promise<[]>((resolve)=>{release=resolve;})} as unknown as ConfigurationSync};
+  const pending=showConfigurationUpdates(host);await f.button('Back').onclick!();release([]);await pending;
+  expect(f.box.all().some(el=>el.text==='Apply selected')).toBe(false);expect(f.host.feedback).not.toHaveBeenCalled();
+});
+test('manual sync reports success inline with Notice and Modal constructors forbidden',async()=>{
+  const plugin=new MindSync({} as App,{id:'mindsync'} as never);plugin.settings.server='https://fixture.example';plugin.settings.token='fixture-token';
+  plugin.engine={state:emptyState(),sync:async()=>{}} as unknown as SyncEngine;
+  await plugin.sync(true);expect(plugin.sidebarSnapshot().feedback).toEqual({text:'Sync completed',error:false});
+});
+test('inline configuration approval keeps complete plugin groups and applies only selected groups',async()=>{
+  const f=fixture();await f.view.onOpen();
+  const updates=['plugins/example/main.js','plugins/example/data.json','app.json'].map((path,index)=>({file:{path,revision:index+1,deleted:false},conflict:false}));
+  const apply=vi.fn(async()=>2);
+  const host:ConfigurationUiHost={openPage:(title,render)=>f.view.showPage(title,render),feedback:f.host.feedback,configurationStatus:'Ready',
+    configurationSelection:defaultConfigurationSelection,saveConfigurationSelection:async()=>{},runConfiguration:async(work)=>work(),
+    configuration:{review:async()=>updates,apply,local:{state:{conflicts:[]}}} as unknown as ConfigurationSync};
+  await showConfigurationUpdates(host);expect(apply).not.toHaveBeenCalled();
+  const toggles=f.box.all().filter(el=>el.tag==='input');expect(toggles.length).toBe(2);await toggles[1].onclick!();
+  await f.button('Apply selected').onclick!();expect(apply).toHaveBeenCalledWith(updates.slice(0,2));
+  expect(f.host.feedback).toHaveBeenCalledWith('Applied 2 configuration files. Reload Obsidian.');
 });

@@ -65,3 +65,7 @@ Delivery complete: 109 client tests/build passed, both installations preserve se
 - Both local vaults installed 0.3.3 with byte-identical credentials/settings/journals and private backups. Actual native UI permission remains unavailable; plugin reload and visual confirmation remain user-side.
 - Package contents, dependency lockfile preservation, credentials/cache exclusions and SHA-256: verified.
 - GitHub main source commit 219a12b and v0.3.3 release published. All six remote asset digests match local files; both installed plugin trios match the published build. Delivery complete; user-side reload/visual confirmation remains explicit.
+
+## Native font size and no popups — 2026-10-14
+
+User explicitly revises the sidebar: match other plugins' typography and avoid popups. Root causes: missing native font token/default h3 sizing and theme display rules overriding hidden buttons. Native typography/hidden CSS, inline page sessions and all Modal/Notice replacement complete. First-sync/configuration approvals and connection identity guards remain. 134 client tests and TypeScript/esbuild passed. Current main vault installed 0.3.4 with exact settings/journal preservation and a private backup; previous test vault directory is absent and not recreated. Final package audit and authorized GitHub delivery in progress; native visual reload remains user-side.
