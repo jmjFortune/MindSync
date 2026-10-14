@@ -32,3 +32,7 @@ Local 99 plugin/18 API tests and both local/NAS real HTTP plus actual SIGKILL re
 ## Host interface preference — 2026-10-14
 
 Do not add MindSync UI to Obsidian's bottom status bar. The user prefers preserving the host design. Keep existing command palette, sidebar ribbon and settings entry points. Removing the item also removes its renderer/calls; synchronization state still supports the status modal. Source/bundle/installed files verify registration removal; actual UI activation requires reload while native permissions are unavailable.
+
+## Explicit settings save — 2026-10-14
+
+The user wants clean settings without helper paragraphs, vertically centered connection controls, and a visible Save changes workflow. Existing token was not missing: both current 64-character values match historical backups and authenticate. Masked fields now expose a Show/Hide action. Drafts must not mutate live settings, and only changed fields should be committed so an unrelated edit cannot overwrite a newly registered token. Serialize all settings writers and persist before applying runtime values. Configuration inventory must remain read-only while selecting an unsaved enable draft. Keep operational errors and actual review metadata; remove instructional copy.

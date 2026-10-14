@@ -67,10 +67,18 @@ export class ConfigurationSync {
     return new TextEncoder().encode(JSON.stringify([...new Set(ids.filter(id=>allowedPlugin(id)&&Object.hasOwn(plugins,id)&&(plugins[id].files||plugins[id].settings)))],null,2)+'\n');
   }
   async inventory() {
-    return this.run(async()=>{
-      const paths=await this.local.inventory(),snapshot=await this.snapshot();
+    if(this.stopped)throw new SyncError('CONFIGURATION_DISABLED','Configuration sync is stopped');
+    if(this.running)throw new SyncError('SYNC_BUSY','Configuration sync is in progress');
+    this.running=true;
+    try{
+      const info=await this.remote.info();
+      if(info.protocol!==2||!info.configuration_sync||!info.configuration_groups)throw new SyncError('CONFIGURATION_UNAVAILABLE','This server does not support settings and plugin sync');
+      if(this.local.state.vaultId&&this.local.state.vaultId!==info.vault_id)throw new SyncError('VAULT_MISMATCH','Configuration journal belongs to a different library');
+      const snapshot=await this.remote.snapshot();
+      if(this.stopped)throw new SyncError('CONFIGURATION_DISABLED','Configuration sync is stopped');
+      const paths=await this.local.inventory();
       return [...new Set([...paths,...snapshot.files.filter(f=>!f.deleted&&allowedConfigurationPath(f.path)).map(f=>f.path)])].sort();
-    });
+    }finally{this.running=false;}
   }
   async previewPublish() {
     return this.run(async(info)=>{

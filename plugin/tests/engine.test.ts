@@ -3,6 +3,11 @@ import {SyncEngine} from '../src/engine';
 import {emptyState, SyncError, validatePath} from '../src/types';
 import {MemoryLocal, MemoryRemote, string} from './helpers';
 function pair() {const remote=new MemoryRemote(),a=new MemoryLocal(),b=new MemoryLocal();return {remote,a,b,A:new SyncEngine(emptyState(),a,remote,'mac'),B:new SyncEngine(emptyState(),b,remote,'android')};}
+test('saved device names apply to subsequent conflicts without reloading',async()=>{
+  const {a,b,A,B}=pair();a.set('note.md','base');await A.sync();await B.sync();
+  B.setDeviceName('updated-device');a.set('note.md','remote');b.set('note.md','local');await A.sync();await B.sync();
+  expect(Object.values(B.state.conflictDetails??{}).some(copy=>copy.device==='updated-device')).toBe(true);
+});
 test('two clients sync notes and attachments in both directions',async()=>{const {a,b,A,B}=pair();a.set('folder/note.md','hello');await A.sync();await B.sync();expect(string(await b.read('folder/note.md'))).toBe('hello');b.set('folder/note.md','tablet');b.set('image.png','binary');await B.sync();await A.sync();expect(string(await a.read('folder/note.md'))).toBe('tablet');expect(string(await a.read('image.png'))).toBe('binary');});
 test('offline edits conflict without losing either version',async()=>{const {a,b,A,B}=pair();a.set('note.md','base');await A.sync();await B.sync();a.set('note.md','mac edit');b.set('note.md','android edit');await A.sync();await B.sync();await A.sync();expect(string(await b.read('note.md'))).toBe('mac edit');expect([...b.files.values()].map(string)).toContain('android edit');expect([...a.files.values()].map(string)).toContain('android edit');});
 test('concurrent create at same path preserves both notes',async()=>{const {a,b,A,B}=pair();await A.sync();await B.sync();a.set('same.md','a');b.set('same.md','b');await A.sync();await B.sync();await A.sync();expect([...a.files.values()].map(string)).toEqual(expect.arrayContaining(['a','b']));});

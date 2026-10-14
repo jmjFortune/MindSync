@@ -10,6 +10,7 @@ export class SyncEngine {
   progress?: TransferProgress;
   onProgress?: (progress?: TransferProgress) => void;
   constructor(public state: SyncState, private local: Local, private remote: Remote, private device = 'device') {}
+  setDeviceName(name:string){this.device=name;}
   get info(): Info | undefined { return this.infoValue; }
   private async save() { await this.local.save(structuredClone(this.state)); }
   async renamed(oldPath: string, path: string) {

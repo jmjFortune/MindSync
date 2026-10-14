@@ -173,3 +173,15 @@ User requested removal of MindSync's bottom status bar entry. Removed registrati
 Single-worker plugin regression suite: 99 passed. TypeScript/esbuild build passed. Source and compiled bundle no longer register a status bar item. Main/test vault installations match the 0.3.1 build; all prior settings/credentials/journals were verified byte-identical. Private pre-update backups remain under backups/obsidian-main-plugin-pre-0.3.1-20261014 and backups/obsidian-test-plugin-pre-0.3.1-20261014.
 
 Computer Use still reports permissions are not granted. No actual plugin reload or visual disappearance was observed; reload Obsidian or toggle MindSync off/on to activate the installed build. Rust/NAS runtime remains 0.3.0 and requires no restart.
+
+# Plugin 0.3.2 settings cleanup — 2026-10-14
+
+The user requested centered connection controls, Save changes, retained token visibility, and removal of explanatory small text. Native setting rows use scoped center alignment/wrapping. Static helper descriptions and instructional paragraphs were removed while actual status, errors, file/revision details remain. Tokens stay masked with an accessible Show/Hide button.
+
+Connection fields and configuration selection now use drafts and explicit Save changes. Writes are serialized and persist before activating a new settings object. Changed fields check their baseline; untouched values merge with the latest saved state. Failed writes do not switch the in-memory connection. Registration checks its captured server before installing returned credentials. Device-name changes apply to the active engine's subsequent conflict metadata. Unsaved forms disable dependent connection/publication actions.
+
+Read-only configuration inventory works before enabling the feature and does not initialize/modify its journal, flush a durable candidate or upload/apply content. Regression coverage uses an actual pending upload to verify that boundary.
+
+Single-worker suite: 109 passed; TypeScript/esbuild build passed. New tests cover draft isolation, durable-before-active settings, failed saves, concurrent writes, updated token preservation, stale credential edits, server changes during registration, staged configuration selection, read-only inventory, and live device-name application. The first device-name test incorrectly assumed filenames retain the full name; existing filename tags are limited to 12 characters. The corrected assertion verifies full conflict metadata without changing filename behavior.
+
+Both local vaults installed 0.3.2 after private backups; existing data.json and all journals verified byte-identical. Both current tokens remain 64 characters, match all pre-update backups and authenticate with HTTP 200. No token values were printed. Native UI permissions remain unavailable: reload and actual host layout/keyboard/theme confirmation remain user-side. Rust/NAS stays 0.3.0.

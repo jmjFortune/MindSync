@@ -3,3 +3,6 @@
 .mindsync-error { color: var(--text-error); }
 .mindsync-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .mindsync-conflict { color: var(--text-warning); }
+.mindsync-settings .setting-item { align-items: center; }
+.mindsync-settings .setting-item-control { align-items: center; flex-wrap: wrap; }
+.mindsync-settings .setting-item-description:empty { display: none; }

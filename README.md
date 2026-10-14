@@ -90,3 +90,5 @@ v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 �
 [设计](docs/superpowers/specs/2026-10-12-mindsync-design.md)与[验证记录](docs/verification.md)说明约束及已完成的测试。真实飞牛、Windows、Android 实机和外网通道需要进一步验收。
 
 0.3.1 起不在 Obsidian 底部状态栏添加 MindSync 项。同步入口保留在侧边栏图标、命令面板和 MindSync 设置；状态与冲突通过命令面板的 View status and conflicts 查看。更新插件后重载即可生效。
+
+0.3.2 的连接设置和配置选择改为显式保存：修改后点击 Save changes，关闭页面会丢弃未保存草稿。注册、测试和同步前先保存修改。Device token 默认用圆点隐藏，可点 Show/Hide 查看或隐藏；注册仍会保存新设备令牌。设置页去掉说明小字，连接行使用垂直居中布局。

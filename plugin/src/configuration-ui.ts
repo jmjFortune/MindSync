@@ -2,31 +2,44 @@ import {App, Modal, Notice, Setting} from 'obsidian';
 import {ConfigurationSync} from './configuration-sync';
 import {ConfigurationSelection, configurationApplyGroup as configurationGroup} from './configuration-paths';
 import {decode} from './types';
+import {SettingsDraft} from './settings';
 
 export interface ConfigurationUiHost {
   app: App;
   configuration?: ConfigurationSync;
   configurationStatus: string;
   configurationSelection(): ConfigurationSelection;
-  saveConfigurationSelection(selection: ConfigurationSelection): Promise<void>;
+  saveConfigurationSelection(selection: ConfigurationSelection, expected?: ConfigurationSelection): Promise<void>;
   runConfiguration<T>(work:()=>Promise<T>):Promise<T|undefined>;
 }
 
 export function showConfigurationSettings(host:ConfigurationUiHost) {
   const modal=new Modal(host.app);modal.setTitle('Settings and plugins');let generation=0;
+  let draft=new SettingsDraft(host.configurationSelection());
   const render=async()=>{
-    const current=++generation,box=modal.contentEl;box.empty();
-    box.createEl('p',{text:'Share selected Obsidian settings, themes, snippets, and plugins. Each device chooses what to sync. Incoming changes wait for your review.'});
-    const selection=host.configurationSelection();
-    new Setting(box).setName('Sync settings and plugins').setDesc('Enable this feature on each device. MindSync credentials, journals, and workspace files stay local.').addToggle(toggle=>toggle.setValue(selection.enabled).onChange(async enabled=>{
-      await host.saveConfigurationSelection({...host.configurationSelection(),enabled});await render();
+    const current=++generation,box=modal.contentEl;box.empty();box.addClass('mindsync-settings');
+    const selection=draft.value,actions:{setDisabled(value:boolean):unknown}[]=[];
+    let save:{setDisabled(value:boolean):unknown}|undefined;
+    const refresh=()=>{save?.setDisabled(!draft.dirty);for(const action of actions)action.setDisabled(draft.dirty);};
+    new Setting(box).setName('Sync settings and plugins').addToggle(toggle=>toggle.setValue(selection.enabled).onChange(async enabled=>{
+      draft.value={...draft.value,enabled};await render();
     }));
+    const error=box.createEl('p',{cls:'mindsync-error',attr:{role:'alert'}});error.hidden=true;
+    new Setting(box).addButton(b=>{
+      save=b;b.setButtonText('Save changes').setCta().onClick(async()=>{
+        box.inert=true;b.setButtonText('Saving…');b.setDisabled(true);
+        try{await host.saveConfigurationSelection(draft.value,draft.original);draft=new SettingsDraft(host.configurationSelection());box.inert=false;await render();new Notice('Changes saved');}
+        catch(value){error.hidden=false;error.setText(value instanceof Error?value.message:String(value));}
+        finally{box.inert=false;refresh();b.setButtonText('Save changes');}
+      });
+    });
     const status=box.createEl('p',{text:host.configurationStatus,attr:{role:'status'}});
+    refresh();
     if(!selection.enabled)return;
     if(!host.configuration){status.setText('Configuration sync is unavailable. Reload the plugin or review its error status.');return;}
-    const update=async(change:Partial<ConfigurationSelection>)=>host.saveConfigurationSelection({...host.configurationSelection(),...change});
-    new Setting(box).setName('Obsidian settings').setDesc('Preferences, appearance, hotkeys, and core plugins.').addToggle(t=>t.setValue(selection.settings).onChange(async value=>{await update({settings:value});}));
-    new Setting(box).setName('Enabled plugin list').setDesc('Only selected, installed, compatible plugins are enabled. Other local choices are preserved.').addToggle(t=>t.setValue(selection.enabledPlugins).onChange(async value=>{await update({enabledPlugins:value});}));
+    const update=async(change:Partial<ConfigurationSelection>)=>{draft.value={...draft.value,...change};refresh();};
+    new Setting(box).setName('Obsidian settings').addToggle(t=>t.setValue(selection.settings).onChange(async value=>{await update({settings:value});}));
+    new Setting(box).setName('Enabled plugin list').addToggle(t=>t.setValue(selection.enabledPlugins).onChange(async value=>{await update({enabledPlugins:value});}));
     box.createEl('h3',{text:'Select items'});
     const inventoryBox=box.createDiv();inventoryBox.createEl('p',{text:'Loading local and remote items…'});
     const paths=await host.runConfiguration(()=>host.configuration!.inventory());
@@ -35,24 +48,24 @@ export function showConfigurationSettings(host:ConfigurationUiHost) {
     inventoryBox.empty();
     const plugins=[...new Set(paths.filter(p=>p.startsWith('plugins/')).map(p=>p.split('/')[1]))];
     for(const id of plugins){
-      const options=host.configurationSelection().plugins[id]??{files:false,settings:false};
-      new Setting(inventoryBox).setName(`Plugin: ${id}`).setDesc('Sync plugin files. Apply updates as a complete group, then reload Obsidian.').addToggle(t=>t.setValue(options.files).onChange(async value=>{
-        const s=host.configurationSelection(),previous=s.plugins[id]??{files:false,settings:false};await update({plugins:{...s.plugins,[id]:{...previous,files:value}}});
+      const options=draft.value.plugins[id]??{files:false,settings:false};
+      new Setting(inventoryBox).setName(`Plugin: ${id}`).addToggle(t=>t.setValue(options.files).onChange(async value=>{
+        const s=draft.value,previous=s.plugins[id]??{files:false,settings:false};await update({plugins:{...s.plugins,[id]:{...previous,files:value}}});
       }));
-      if(paths.includes(`plugins/${id}/data.json`))new Setting(inventoryBox).setName(`${id}: settings`).setDesc('Optional. Plugin settings may contain API keys or account information.').addToggle(t=>t.setValue(options.settings).onChange(async value=>{
-        const s=host.configurationSelection(),previous=s.plugins[id]??{files:false,settings:false};await update({plugins:{...s.plugins,[id]:{...previous,settings:value}}});
+      if(paths.includes(`plugins/${id}/data.json`))new Setting(inventoryBox).setName(`${id}: settings`).addToggle(t=>t.setValue(options.settings).onChange(async value=>{
+        const s=draft.value,previous=s.plugins[id]??{files:false,settings:false};await update({plugins:{...s.plugins,[id]:{...previous,settings:value}}});
       }));
     }
     for(const [folder,label] of [['themes','Theme'],['snippets','Snippet']] as const){
       const names=[...new Set(paths.filter(p=>p.startsWith(folder+'/')).map(p=>p.split('/')[1]))];
-      for(const name of names)new Setting(inventoryBox).setName(`${label}: ${name}`).addToggle(t=>t.setValue(host.configurationSelection()[folder].includes(name)).onChange(async value=>{
-        const selected=host.configurationSelection()[folder];await update({[folder]:value?[...new Set([...selected,name])]:selected.filter(p=>p!==name)});
+      for(const name of names)new Setting(inventoryBox).setName(`${label}: ${name}`).addToggle(t=>t.setValue(draft.value[folder].includes(name)).onChange(async value=>{
+        const selected=draft.value[folder];await update({[folder]:value?[...new Set([...selected,name])]:selected.filter(p=>p!==name)});
       }));
     }
     if(!plugins.length&&!paths.some(p=>p.startsWith('themes/')||p.startsWith('snippets/')))inventoryBox.createEl('p',{text:'No optional plugin, theme, or snippet files found.'});
     box.createEl('h3',{text:'Publish or receive'});
-    box.createEl('p',{text:'On the source device, publish selected items. On another device, review remote settings. Changing the selection never deletes local files.'});
-    new Setting(box).addButton(b=>b.setButtonText('Publish this device').onClick(()=>void showPublishPreview(host))).addButton(b=>b.setButtonText('Review remote settings').setCta().onClick(()=>void showConfigurationUpdates(host)));
+    new Setting(box).addButton(b=>{actions.push(b);b.setButtonText('Publish this device').onClick(()=>void showPublishPreview(host));}).addButton(b=>{actions.push(b);b.setButtonText('Review remote settings').setCta().onClick(()=>void showConfigurationUpdates(host));});
+    refresh();
   };
   const close=modal.onClose.bind(modal);modal.onClose=()=>{generation++;close();};modal.open();void render();
 }
@@ -61,7 +74,6 @@ async function showPublishPreview(host:ConfigurationUiHost) {
   if(!host.configuration)return;
   const items=await host.runConfiguration(()=>host.configuration!.previewPublish());if(!items)return;
   const modal=new Modal(host.app);modal.setTitle('Publish selected settings');
-  modal.contentEl.createEl('p',{text:'This preview does not change files. Differing remote content is kept for review; it is not overwritten automatically.'});
   const list=modal.contentEl.createEl('ul');for(const item of items)list.createEl('li',{text:`${item.action}: ${item.path}`});
   if(!items.length)modal.contentEl.createEl('p',{text:'The selected items are already up to date.'});
   new Setting(modal.contentEl).addButton(b=>b.setButtonText('Not now').onClick(()=>modal.close())).addButton(b=>b.setButtonText('Publish selected').setCta().onClick(async()=>{
@@ -76,7 +88,6 @@ export async function showConfigurationUpdates(host:ConfigurationUiHost) {
   if(!host.configuration)return;
   const updates=await host.runConfiguration(()=>host.configuration!.review());if(!updates)return;
   const modal=new Modal(host.app);modal.setTitle('Review configuration updates');
-  modal.contentEl.createEl('p',{text:'Review each group before applying. Current files are backed up. Local edits made after this preview prevent application. Reload Obsidian after applying updates.'});
   if(host.configuration.local.state.incompleteGroups?.length)modal.contentEl.createEl('p',{text:'Some package uploads are incomplete. Wait for the source device to finish, then review again.',attr:{role:'status'}});
   if(!updates.length)modal.contentEl.createEl('p',{text:'No selected configuration updates are pending.'});
   const selectedGroups=new Set(updates.map(u=>configurationGroup(u.file.path)));

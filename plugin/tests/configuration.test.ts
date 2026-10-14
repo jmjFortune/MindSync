@@ -131,6 +131,19 @@ test('invalid Obsidian preference shapes are rejected without publishing',async(
   const {a,A,remote}=configurationPair();a.set('.obsidian/app.json','null');await expect(A.previewPublish()).rejects.toMatchObject({code:'INVALID_CONFIGURATION'});expect(remote.log).toHaveLength(0);
 });
 
+test('selection inventory is read-only before the feature is saved as enabled',async()=>{
+  const {a,A,selection,remote}=configurationPair();
+  a.set('.obsidian/app.json','{}');remote.failAfter=0;
+  await expect(A.publish(await A.previewPublish())).rejects.toThrow('network interrupted');
+  remote.failAfter=undefined;selection.enabled=false;
+  a.set('.obsidian/plugins/calendar/main.js','code');
+  const before=structuredClone(a.local.state);
+  expect(before.pending).toHaveLength(1);
+  expect(await A.inventory()).toContain('plugins/calendar/main.js');
+  expect(a.local.state).toEqual(before);expect(remote.log).toHaveLength(0);expect(remote.uploads).toBe(0);
+  await expect(A.previewPublish()).rejects.toMatchObject({code:'CONFIGURATION_DISABLED'});
+});
+
 test('all immutable package candidates are journaled together before the first commit',async()=>{
   const {a,A,remote,selection}=configurationPair();selection.plugins.calendar={files:true,settings:false};
   a.set('.obsidian/plugins/calendar/main.js','code');a.set('.obsidian/plugins/calendar/manifest.json',pluginManifest('calendar'));

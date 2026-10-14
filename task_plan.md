@@ -48,3 +48,7 @@ User explicitly requests that MindSync not add an item to Obsidian's bottom stat
 
 
 Delivery verified: 99 client tests/build, both byte-preserving installations, package audit and GitHub main/v0.3.1 release assets complete. All six uploaded assets match local SHA-256. Actual running UI still requires reload because native permissions are not granted.
+
+## Clean settings and explicit save — 2026-10-14
+
+Approved direction: vertically center native connection row, add Save changes, retain/show masked token, remove explanatory small text. Token audit: both current 64-character tokens match all pre-update backups and authenticate with HTTP 200. Implement isolated drafts, transactional serialized patch saves, stale-edit protection, read-only selection inventory, and immediate device-name application. Verify regression/build, install without touching settings/journals, and publish plugin 0.3.2; server unchanged. Actual native GUI access is unavailable.
