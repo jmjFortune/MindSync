@@ -59,5 +59,8 @@ Delivery complete: 109 client tests/build passed, both installations preserve se
 
 - Explore native view APIs, existing actions/status, and user UI preferences: complete.
 - Prepare compact sidebar design and review alternatives: complete; docs/superpowers/specs/2026-10-14-sidebar-design.md.
-- User design review: pending. No feature implementation changes yet.
-- Implementation, regression/build, byte-preserving installation and authorized GitHub delivery: pending design review.
+- User design review: approved with "好". Sequential plan: docs/superpowers/plans/2026-10-14-sidebar.md.
+- Native view, local notifications, existing action delegation and lifecycle: complete.
+- Regression/build: 125 client tests passed with one worker; TypeScript/esbuild and English/scoped-style audits passed.
+- Both local vaults installed 0.3.3 with byte-identical credentials/settings/journals and private backups. Actual native UI permission remains unavailable; plugin reload and visual confirmation remain user-side.
+- Package audit and authorized GitHub delivery: in progress.

@@ -2,7 +2,7 @@
 
 ## User request and proposed design
 
-Add a MindSync tab to the native right sidebar alongside Git, Calendar, and other views, as shown in the user's screenshot. Preserve the compact native Obsidian appearance. All interface text remains English; omit explanatory helper copy. This document is ready for user review; feature implementation has not started.
+Add a MindSync tab to the native right sidebar alongside Git, Calendar, and other views, as shown in the user's screenshot. Preserve the compact native Obsidian appearance. All interface text remains English; omit explanatory helper copy. The user approved this design on 2026-10-14.
 
 ## Options
 
