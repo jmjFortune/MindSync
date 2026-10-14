@@ -54,3 +54,10 @@ Delivery verified: 99 client tests/build, both byte-preserving installations, pa
 Approved direction: vertically center native connection row, add Save changes, retain/show masked token, remove explanatory small text. Token audit: both current 64-character tokens match all pre-update backups and authenticate with HTTP 200. Implement isolated drafts, transactional serialized patch saves, stale-edit protection, read-only selection inventory, and immediate device-name application. Verify regression/build, install without touching settings/journals, and publish plugin 0.3.2; server unchanged. Actual native GUI access is unavailable.
 
 Delivery complete: 109 client tests/build passed, both installations preserve settings and journals byte-for-byte, and source commit 7ab696d is published on GitHub main with v0.3.2. All six release assets match local SHA-256 values. Reloading the installed plugin and visual verification remain user-side because native UI access is unavailable.
+
+## Native right sidebar — 2026-10-14
+
+- Explore native view APIs, existing actions/status, and user UI preferences: complete.
+- Prepare compact sidebar design and review alternatives: complete; docs/superpowers/specs/2026-10-14-sidebar-design.md.
+- User design review: pending. No feature implementation changes yet.
+- Implementation, regression/build, byte-preserving installation and authorized GitHub delivery: pending design review.
