@@ -15,3 +15,8 @@ target/
 # Per-library credentials (keep the example template).
 libraries/*.env
 !libraries/example.env
+
+# Local planning notes (kept on disk, not published).
+progress.md
+task_plan.md
+findings.md

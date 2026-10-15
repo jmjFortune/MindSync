@@ -10,7 +10,7 @@ Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不�
 
 ## 网络访问与隐私
 
-插件**只连接一个地址**：你在 MindSync 设置页里自己填写的自建服务地址（`Server` 字段，例如 `https://notes.example.com` 或 `http://192.168.193.2:5984`）。代码中没有任何硬编码的第三方服务地址，唯一出现的 URL 是设置页的输入示例占位符。
+插件**只连接一个地址**：你在 MindSync 设置页里自己填写的自建服务地址（`Server` 字段，例如 `https://notes.example.com` 或 `http://192.168.1.10:8080`）。代码中没有任何硬编码的第三方服务地址，唯一出现的 URL 是设置页的输入示例占位符。
 
 联网只用于你要求的同步操作：注册设备并获取设备令牌、拉取/推送笔记与附件、查询版本历史与冲突副本、按项同步 Obsidian 设置与插件包、以及查看同步状态。所有请求都带设备令牌发往该地址下的 `/v1/*` 路由，协议见[协议说明](docs/protocol.md)。
 
@@ -102,16 +102,6 @@ v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 �
 
 [协议](docs/protocol.md)使用文件身份、版本、对象哈希和变更游标，独立于存储位置。服务端内容存储接口预留后续 WebDAV、S3 和网盘实现；仍由 NAS 管理版本一致性。RAG 可通过快照、分页变更和对象下载 API 建立自己的索引，暂未实现索引器或专用 RAG 身份。
 
-[设计](docs/superpowers/specs/2026-10-12-mindsync-design.md)与[验证记录](docs/verification.md)说明约束及已完成的测试。真实飞牛、Windows、Android 实机和外网通道需要进一步验收。
+[设计](docs/designs/2026-10-12-mindsync-design.md)与[验证记录](docs/verification.md)说明约束及已完成的测试。真实飞牛、Windows、Android 实机和外网通道需要进一步验收。实施计划见 [docs/plans](docs/plans)。
 
-0.3.1 起不在 Obsidian 底部状态栏添加 MindSync 项。同步入口保留在侧边栏图标、命令面板和 MindSync 设置；状态与冲突通过命令面板的 View status and conflicts 查看。更新插件后重载即可生效。
-
-0.3.2 的连接设置和配置选择改为显式保存：修改后点击 Save changes，关闭页面会丢弃未保存草稿。注册、测试和同步前先保存修改。Device token 默认用圆点隐藏，可点 Show/Hide 查看或隐藏；注册仍会保存新设备令牌。设置页去掉说明小字，连接行使用垂直居中布局。
-
-0.3.3 新增右侧栏 MindSync 页签，与 Git 等面板并列。点击左侧 MindSync 图标或命令 MindSync: Open MindSync 打开；顶部提供同步、预览、暂停/继续、历史和设置/插件管理，下方显示本机同步状态、待处理数量、配置更新与冲突副本。启动仅添加页签，不自动展开侧栏或抢占焦点；面板更新不新增网络轮询。连接地址和令牌仍在插件设置页保存。
-
-0.3.4 侧栏字号跟随 Obsidian 原生导航字号，标题和表单保持紧凑。预览、历史、配置选择/发布/审核以及保留副本查看都在 MindSync 面板内完成，用 Back 返回概览；成功和错误使用页面内反馈，不再弹出 MindSync 模态框或通知。首次合并仍需明确确认，配置仍需分组审核。连接设置的 Save changes 保持不变。
-
-0.3.5 使用用户提供的脑回路图标作为 MindSync 页签和左侧入口，实际同步按钮仍用刷新图标。预览或历史请求失败后正确移除 Loading 状态，并显示实际错误。跨平台路径检查保持不变：冒号等 Windows 不支持的字符会被拒绝；不会自动更名或忽略用户文件。
-
-0.3.6 不改变同步行为，只为发布渠道补齐材料：新增 `LICENSE`（MIT）、仓库根 `manifest.json`（由 `scripts/sync-manifest.mjs` 从 `plugin/manifest.json` 同步）和 README 的联网与隐私说明，并把 Release 标签改为与 manifest 版本一致的 `0.3.6`（不再加 `v` 前缀）。`node scripts/package.mjs` 会自动同步根 manifest，并把 `LICENSE` 一并打进源码包。
+各版本的插件行为变化见[更新记录](CHANGELOG.md)；当前插件版本 0.3.6。

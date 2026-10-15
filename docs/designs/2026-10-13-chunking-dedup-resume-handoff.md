@@ -5,7 +5,7 @@
 > 交付对象：实施者（GPT 或其它代理）
 > 仓库：`~/Desktop/projects/MindSync`（分支 `feat/docker-sync`）
 > 相关既有文档：`docs/protocol.md`、`docs/deploy-fnos.md`、`docs/verification.md`、
-> `docs/superpowers/specs/2026-10-12-library-abstraction-design.md`
+> `docs/designs/2026-10-12-library-abstraction-design.md`
 
 ---
 

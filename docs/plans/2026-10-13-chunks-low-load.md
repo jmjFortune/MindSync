@@ -2,7 +2,7 @@
 
 位置：/Users/shiyun/Desktop/projects/MindSync，分支 feat/docker-sync。
 
-依据交接规格完成阶段 1–3 的源码、回归测试、协议/部署文档与验收脚本。用户睡觉期间只进行轻量源码工作；随后明确允许限制并发恢复验证。最新证据见 progress.md 和 docs/verification.md。
+依据交接规格完成阶段 1–3 的源码、回归测试、协议/部署文档与验收脚本。用户睡觉期间只进行轻量源码工作；随后明确允许限制并发恢复验证。最新证据见 docs/verification.md。
 
 已完成本地 73 项插件测试、15 项服务端集成测试、构建/clippy/fmt、真实 HTTP、备份迁移、进程 SIGKILL/双槽恢复、模拟 30 秒断网、PDF 去重及手动 GC 验收。0.2.0 已打包并装入专用 macOS 测试 vault，保留配置/状态备份。
 
