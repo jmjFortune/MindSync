@@ -8,6 +8,19 @@
 
 Android 需要 Obsidian 在前台运行；应用关闭或被系统挂起时不承诺后台同步。笔记同步默认排除隐藏目录；0.3.0 新增独立的设置和插件同步，按设备启用并按项选择，收到更新后预览应用。MindSync 自身凭据/日志与 workspace 文件保持本机独立。单文件默认上限 50 MiB，v2 支持内容分块、跨版本去重和未提交候选的断点续传，本地与 NAS 验证结果见验证记录。暂不支持端到端加密、多人协作、WebDAV 或 RAG。历史对象不自动清理；手动 GC 只回收超过宽限期的无引用对象，保留所有历史版本。可读文件树只供查看和导出，直接修改会在重建时丢弃。
 
+## 网络访问与隐私
+
+插件**只连接一个地址**：你在 MindSync 设置页里自己填写的自建服务地址（`Server` 字段，例如 `https://notes.example.com` 或 `http://192.168.193.2:5984`）。代码中没有任何硬编码的第三方服务地址，唯一出现的 URL 是设置页的输入示例占位符。
+
+联网只用于你要求的同步操作：注册设备并获取设备令牌、拉取/推送笔记与附件、查询版本历史与冲突副本、按项同步 Obsidian 设置与插件包、以及查看同步状态。所有请求都带设备令牌发往该地址下的 `/v1/*` 路由，协议见[协议说明](docs/protocol.md)。
+
+- 不使用任何第三方或中转服务，不发送遥测，不含广告，不自更新，不下载并执行远程代码。
+- 设备令牌、连接设置、状态日志与保留副本只保存在本机的配置目录（`plugins/mindsync/`）内，不参与设置与插件同步。
+- 你的笔记、附件与服务端数据都留在你自己的 NAS 上；本插件不收集、不上传任何内容到作者或任何第三方。
+- 未右键任何文件、未打开同步前不会产生请求；暂停自动同步后立即停止轮询，仍可在面板里手动操作。
+
+**Network access（English summary）**：MindSync talks only to the self-hosted server URL entered by the user in its settings, under that server's `/v1/*` routes, using a device token. Network access is required to register devices and to sync notes, attachments, version history, conflict copies, and the opt-in Obsidian settings/plugin sync. The plugin contains no hardcoded third-party endpoints, no telemetry, no ads, no self-update, and no remotely loaded code. Credentials and state stay in the vault's config directory; all synced content stays on the user's own NAS.
+
 ## 部署与安装
 
 完整步骤见 [飞牛部署说明](docs/deploy-fnos.md)。服务按**库**组织：一个库 = 一个服务端实例 + 一个独立数据目录 + 一个管理令牌。各库独立保存数据。目前已接入 Obsidian，库名为 obsidian；Zotero 客户端尚未实现，下方命令只展示如何部署独立文献库服务。
@@ -27,6 +40,8 @@ sh scripts/add-library.sh zotero 8081 /vol1/1000/libraries/zotero
 旧的单库方式（`sh scripts/init-env.sh` + `.env` + `docker compose up -d --build --wait`）仍然可用，详见部署说明。
 
 将安装包内 `mindsync` 文件夹复制到本地库的 `.obsidian/plugins/`，或库自定义配置目录下的 `plugins/`。它包含 `main.js`、`manifest.json` 和 `styles.css`。在 Obsidian 社区插件设置中启用 MindSync。所有设备首次连接先预览同步计划，再确认合并。
+
+也可以用 BRAT（`jmjFortune/MindSync`）从 GitHub 安装并自动跟随新版本。0.3.6 起仓库根目录保留与 `plugin/manifest.json` 同步的 `manifest.json`，Release 标签与 manifest 版本号一致（形如 `0.3.6`），满足社区目录的安装与更新要求。
 
 ## 设置和插件同步（0.3.0）
 
@@ -98,3 +113,5 @@ v2 必须先完成测试与备份，再同步升级服务端和插件。0.2.0 �
 0.3.4 侧栏字号跟随 Obsidian 原生导航字号，标题和表单保持紧凑。预览、历史、配置选择/发布/审核以及保留副本查看都在 MindSync 面板内完成，用 Back 返回概览；成功和错误使用页面内反馈，不再弹出 MindSync 模态框或通知。首次合并仍需明确确认，配置仍需分组审核。连接设置的 Save changes 保持不变。
 
 0.3.5 使用用户提供的脑回路图标作为 MindSync 页签和左侧入口，实际同步按钮仍用刷新图标。预览或历史请求失败后正确移除 Loading 状态，并显示实际错误。跨平台路径检查保持不变：冒号等 Windows 不支持的字符会被拒绝；不会自动更名或忽略用户文件。
+
+0.3.6 不改变同步行为，只为发布渠道补齐材料：新增 `LICENSE`（MIT）、仓库根 `manifest.json`（由 `scripts/sync-manifest.mjs` 从 `plugin/manifest.json` 同步）和 README 的联网与隐私说明，并把 Release 标签改为与 manifest 版本一致的 `0.3.6`（不再加 `v` 前缀）。`node scripts/package.mjs` 会自动同步根 manifest，并把 `LICENSE` 一并打进源码包。

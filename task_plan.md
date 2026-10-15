@@ -79,3 +79,11 @@ Confirmed colon-containing local directory names violate the existing client/ser
 136 client tests/build and compiled native icon registration verified. Main vault installed 0.3.5 with byte-identical original settings/journals and private backup. Final package/GitHub delivery in progress. Existing colon path errors remain intentional until the user chooses how to handle authored paths.
 
 Independent delivery complete: source commit 08faa24 pushed to main, v0.3.5 published, all six asset digests match local SHA-256. Installed trio and package/source/SVG/private-exclusion checks passed. User path-policy choice remains pending; no user-authored paths changed and no claim is made that those incompatible files now synchronize. Native reload/visual confirmation remains user-side.
+
+## Community directory readiness — 2026-10-15
+
+User asks why MindSync is missing from the in-app Community plugins browser. Verified: it was never submitted to the community directory and is absent from community-plugins.json; releases alone do not list a plugin. Repository-side blockers against the published submission requirements and developer policies: missing LICENSE, missing root manifest.json, `v`-prefixed tags not matching manifest.version, and no README network-use disclosure.
+
+- MIT LICENSE, root manifest.json with scripts/sync-manifest.mjs wired into scripts/package.mjs, README network/privacy disclosure, and tag convention `0.3.6`: complete.
+- 136 single-worker client tests, TypeScript/esbuild, ZIP/build identity, source archive contents, English/no-popup/no-status-bar and checksum audits: passed.
+- Publish source commit and tag `0.3.6` with the six release assets; then the owner submits the repository at community.obsidian.md and addresses review feedback. Vault installation and native reload remain user-side.
